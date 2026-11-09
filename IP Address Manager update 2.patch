@@ -1,0 +1,75 @@
+From 5b1b6dd0a960da352d38ac09d0fd7e5b00e6e5e1 Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Wed, 4 Nov 2026 05:42:05 +0000
+Subject: [PATCH] IP Address Manager update 2
+
+---
+ server/ip.js      | 21 +++++++++++++++++++++
+ server/ip.test.js | 26 ++++++++++++++++++++++++++
+ 2 files changed, 47 insertions(+)
+ create mode 100644 server/ip.test.js
+
+diff --git a/server/ip.js b/server/ip.js
+index e4ddaf8..b2d9f40 100644
+--- a/server/ip.js
++++ b/server/ip.js
+@@ -16,3 +16,24 @@ export function parseIp(text) {
+ export function formatIp(n) {
+   return [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.')
+ }
++
++// "192.168.1.0/24" -> { network, broadcast, prefix, first, last, total, usable }
++export function parseCidr(text) {
++  if (typeof text !== 'string') return null
++  const [ipText, pText, ...rest] = text.trim().split('/')
++  const ip = parseIp(ipText)
++  if (ip === null || rest.length || !/^\d{1,2}$/.test(pText ?? '')) return null
++  const prefix = Number(pText)
++  if (prefix > 32) return null
++  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0
++  const network = (ip & mask) >>> 0
++  const broadcast = (network | (~mask >>> 0)) >>> 0
++  const total = 2 ** (32 - prefix)
++  const small = prefix >= 31 // /31 and /32 have no network/broadcast addresses
++  return {
++    prefix, network, broadcast, total,
++    first: small ? network : network + 1,
++    last: small ? broadcast : broadcast - 1,
++    usable: small ? total : total - 2,
++  }
++}
+diff --git a/server/ip.test.js b/server/ip.test.js
+new file mode 100644
+index 0000000..199f720
+--- /dev/null
++++ b/server/ip.test.js
+@@ -0,0 +1,26 @@
++import test from 'node:test'
++import assert from 'node:assert/strict'
++import { parseIp, formatIp, parseCidr } from './ip.js'
++
++test('parseIp accepts valid and rejects invalid addresses', () => {
++  assert.equal(formatIp(parseIp('192.168.1.10')), '192.168.1.10')
++  assert.equal(parseIp('192.168.1.300'), null)
++  assert.equal(parseIp('1.2.3'), null)
++  assert.equal(parseIp('a.b.c.d'), null)
++})
++
++test('parseCidr works for a /24', () => {
++  const c = parseCidr('192.168.1.77/24')
++  assert.equal(formatIp(c.network), '192.168.1.0')
++  assert.equal(formatIp(c.broadcast), '192.168.1.255')
++  assert.equal(formatIp(c.first), '192.168.1.1')
++  assert.equal(formatIp(c.last), '192.168.1.254')
++  assert.equal(c.usable, 254)
++})
++
++test('parseCidr handles /31, /32 and bad input', () => {
++  assert.equal(parseCidr('10.0.0.0/31').usable, 2)
++  assert.equal(parseCidr('10.0.0.5/32').usable, 1)
++  assert.equal(parseCidr('10.0.0.0/33'), null)
++  assert.equal(parseCidr('10.0.0.0'), null)
++})
+-- 
+2.43.0
+

@@ -1,0 +1,76 @@
+From 30bbbf159df2b69026f6dd3aaac36e80e67c9b9b Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Wed, 4 Nov 2026 05:42:05 +0000
+Subject: [PATCH] IP Address Manager update 3
+
+---
+ server/db.js | 57 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 57 insertions(+)
+ create mode 100644 server/db.js
+
+diff --git a/server/db.js b/server/db.js
+new file mode 100644
+index 0000000..3383654
+--- /dev/null
++++ b/server/db.js
+@@ -0,0 +1,57 @@
++import { DatabaseSync } from 'node:sqlite'
++import { fileURLToPath } from 'node:url'
++import { formatIp } from './ip.js'
++
++const file = process.env.DB_FILE || fileURLToPath(new URL('./data.db', import.meta.url))
++const db = new DatabaseSync(file)
++
++db.exec(`
++  CREATE TABLE IF NOT EXISTS devices (
++    id         INTEGER PRIMARY KEY AUTOINCREMENT,
++    ip         INTEGER NOT NULL UNIQUE,
++    name       TEXT    NOT NULL,
++    type       TEXT    NOT NULL,
++    status     TEXT    NOT NULL,
++    notes      TEXT    NOT NULL DEFAULT '',
++    created_at TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
++  )
++`)
++
++export const TYPES = ['Router', 'Switch', 'Server', 'PC', 'Printer', 'Phone', 'Other']
++export const STATUSES = ['static', 'dhcp']
++
++const toDevice = (r) => ({
++  id: Number(r.id), ip: formatIp(r.ip), ipNum: r.ip,
++  name: r.name, type: r.type, status: r.status, notes: r.notes,
++})
++
++export const listDevices = () =>
++  db.prepare('SELECT * FROM devices ORDER BY ip').all().map(toDevice)
++
++export const getDevice = (id) => {
++  const r = db.prepare('SELECT * FROM devices WHERE id = ?').get(id)
++  return r ? toDevice(r) : null
++}
++
++export const findByIp = (ip) => {
++  const r = db.prepare('SELECT * FROM devices WHERE ip = ?').get(ip)
++  return r ? toDevice(r) : null
++}
++
++export const devicesInRange = (from, to) =>
++  db.prepare('SELECT * FROM devices WHERE ip BETWEEN ? AND ? ORDER BY ip').all(from, to).map(toDevice)
++
++export function createDevice(d) {
++  const r = db.prepare('INSERT INTO devices (ip, name, type, status, notes) VALUES (?, ?, ?, ?, ?)')
++    .run(d.ip, d.name, d.type, d.status, d.notes)
++  return getDevice(Number(r.lastInsertRowid))
++}
++
++export function updateDevice(id, d) {
++  db.prepare('UPDATE devices SET ip = ?, name = ?, type = ?, status = ?, notes = ? WHERE id = ?')
++    .run(d.ip, d.name, d.type, d.status, d.notes, id)
++  return getDevice(id)
++}
++
++export const deleteDevice = (id) =>
++  db.prepare('DELETE FROM devices WHERE id = ?').run(id).changes > 0
+-- 
+2.43.0
+

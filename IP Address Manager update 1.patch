@@ -1,0 +1,37 @@
+From 5717a22e8719e71b5e39306260d2997ce2c2e002 Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Wed, 4 Nov 2026 05:42:05 +0000
+Subject: [PATCH] IP Address Manager update 1
+
+---
+ server/ip.js | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+ create mode 100644 server/ip.js
+
+diff --git a/server/ip.js b/server/ip.js
+new file mode 100644
+index 0000000..e4ddaf8
+--- /dev/null
++++ b/server/ip.js
+@@ -0,0 +1,18 @@
++// IPv4 helpers. An address is stored as one 32-bit number so it is easy to sort and compare.
++export function parseIp(text) {
++  if (typeof text !== 'string') return null
++  const parts = text.trim().split('.')
++  if (parts.length !== 4) return null
++  let n = 0
++  for (const p of parts) {
++    if (!/^\d{1,3}$/.test(p)) return null
++    const v = Number(p)
++    if (v > 255) return null
++    n = n * 256 + v
++  }
++  return n
++}
++
++export function formatIp(n) {
++  return [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.')
++}
+-- 
+2.43.0
+

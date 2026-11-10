@@ -1,0 +1,37 @@
+From 5373adc881dca86c9ba78da99bd77331fdc4d867 Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Wed, 4 Nov 2026 05:42:05 +0000
+Subject: [PATCH] IP Address Manager update 5
+
+---
+ server/index.js | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+ create mode 100644 server/index.js
+
+diff --git a/server/index.js b/server/index.js
+new file mode 100644
+index 0000000..550fb59
+--- /dev/null
++++ b/server/index.js
+@@ -0,0 +1,18 @@
++import http from 'node:http'
++import { listDevices, TYPES } from './db.js'
++
++const PORT = process.env.PORT || 3001
++
++function send(res, status, data) {
++  res.writeHead(status, { 'Content-Type': 'application/json' })
++  res.end(data === null ? '' : JSON.stringify(data))
++}
++
++const server = http.createServer((req, res) => {
++  const path = new URL(req.url, 'http://localhost').pathname
++  if (path === '/api/types' && req.method === 'GET') return send(res, 200, TYPES)
++  if (path === '/api/devices' && req.method === 'GET') return send(res, 200, listDevices())
++  send(res, 404, { error: 'Not found.' })
++})
++
++server.listen(PORT, () => console.log(`IP manager API running on http://localhost:${PORT}`))
+-- 
+2.43.0
+

@@ -1,0 +1,85 @@
+From 9ffd7d0afa1d0f5c418395a8c59ed9791191d5f6 Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Wed, 4 Nov 2026 05:42:06 +0000
+Subject: [PATCH] IP Address Manager update 7
+
+---
+ server/index.js | 50 ++++++++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 45 insertions(+), 5 deletions(-)
+
+diff --git a/server/index.js b/server/index.js
+index 75e0ded..699c327 100644
+--- a/server/index.js
++++ b/server/index.js
+@@ -1,6 +1,10 @@
+ import http from 'node:http'
++import { formatIp } from './ip.js'
+ import { validateDevice } from './validate.js'
+-import { listDevices, createDevice, TYPES } from './db.js'
++import {
++  listDevices, getDevice, findByIp, devicesInRange,
++  createDevice, updateDevice, deleteDevice, TYPES,
++} from './db.js'
+ 
+ const PORT = process.env.PORT || 3001
+ 
+@@ -22,16 +26,52 @@ function readJson(req) {
+   })
+ }
+ 
++// First unused address after `ip`, staying inside the same /24.
++function suggestFree(ip) {
++  const end = (ip >>> 8) * 256 + 254 // not << 8, which goes negative for big numbers
++  const used = new Set(devicesInRange(ip, end).map((d) => d.ipNum))
++  for (let n = ip + 1; n <= end; n++) if (!used.has(n)) return formatIp(n)
++  return null
++}
++
++function conflict(ip, ownId) {
++  const other = findByIp(ip)
++  if (!other || other.id === ownId) return null
++  return { error: `${other.ip} is already used by ${other.name}.`, suggestion: suggestFree(ip) }
++}
++
+ const server = http.createServer(async (req, res) => {
+   try {
+-    const path = new URL(req.url, 'http://localhost').pathname
+-    if (path === '/api/types' && req.method === 'GET') return send(res, 200, TYPES)
+-    if (path === '/api/devices' && req.method === 'GET') return send(res, 200, listDevices())
+-    if (path === '/api/devices' && req.method === 'POST') {
++    const url = new URL(req.url, 'http://localhost')
++    const path = url.pathname
++    const method = req.method
++
++    if (path === '/api/types' && method === 'GET') return send(res, 200, TYPES)
++    if (path === '/api/devices' && method === 'GET') return send(res, 200, listDevices())
++
++    if (path === '/api/devices' && method === 'POST') {
+       const { error, value } = validateDevice(await readJson(req))
+       if (error) return send(res, 400, { error })
++      const dup = conflict(value.ip, null)
++      if (dup) return send(res, 409, dup)
+       return send(res, 201, createDevice(value))
+     }
++
++    const m = path.match(/^\/api\/devices\/(\d+)$/)
++    if (m) {
++      const id = Number(m[1])
++      if (!getDevice(id)) return send(res, 404, { error: 'Device not found.' })
++      if (method === 'GET') return send(res, 200, getDevice(id))
++      if (method === 'PUT') {
++        const { error, value } = validateDevice(await readJson(req))
++        if (error) return send(res, 400, { error })
++        const dup = conflict(value.ip, id)
++        if (dup) return send(res, 409, dup)
++        return send(res, 200, updateDevice(id, value))
++      }
++      if (method === 'DELETE') { deleteDevice(id); return send(res, 204, null) }
++    }
++
+     send(res, 404, { error: 'Not found.' })
+   } catch (e) {
+     send(res, 400, { error: e.message || 'Bad request.' })
+-- 
+2.43.0
+

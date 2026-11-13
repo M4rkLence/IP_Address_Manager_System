@@ -1,0 +1,34 @@
+From e7beb20813ae98e733cea728ccc245dcdb096814 Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Wed, 4 Nov 2026 05:42:06 +0000
+Subject: [PATCH] IP Address Manager update 13
+
+---
+ client/src/styles.css | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/client/src/styles.css b/client/src/styles.css
+index e69de29..5a14995 100644
+--- a/client/src/styles.css
++++ b/client/src/styles.css
+@@ -0,0 +1,17 @@
++body { margin: 0; background: #f1f4f8; color: #17212f; font: 16px/1.5 system-ui, sans-serif; }
++main { max-width: 860px; margin: 0 auto; padding: 22px 14px 48px; }
++h1 { font-size: 1.6rem; margin: 0 0 12px; }
++h2 { font-size: 1.05rem; margin: 26px 0 8px; }
++label { display: block; font-size: .85rem; color: #556277; margin-bottom: 10px; }
++input, select { display: block; width: 100%; margin-top: 4px; padding: 9px 11px; font: inherit;
++  border: 1.5px solid #d2d9e3; border-radius: 6px; }
++button { font: inherit; cursor: pointer; padding: 8px 13px; font-weight: 600;
++  border: 1.5px solid #d2d9e3; border-radius: 6px; background: #fff; }
++button.primary { background: #0b7a75; border-color: #0b7a75; color: #fff; }
++.form { background: #fff; border: 1px solid #d2d9e3; border-radius: 8px; padding: 14px 16px; }
++.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
++.actions { display: flex; gap: 8px; }
++.error { color: #b42318; }
++.scroll { overflow-x: auto; }
++table { width: 100%; border-collapse: collapse; min-width: 560px; }
++th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid #d2d9e3; }
+-- 
+2.43.0
+

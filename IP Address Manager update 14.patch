@@ -1,0 +1,88 @@
+From 632ed87060c1c95bf1aa9389d2fcc683eaf3d9af Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Wed, 4 Nov 2026 05:42:06 +0000
+Subject: [PATCH] IP Address Manager update 14
+
+---
+ client/src/App.jsx | 42 +++++++++++++++++++++++++++++++++---------
+ 1 file changed, 33 insertions(+), 9 deletions(-)
+
+diff --git a/client/src/App.jsx b/client/src/App.jsx
+index a70202e..2f7008c 100644
+--- a/client/src/App.jsx
++++ b/client/src/App.jsx
+@@ -6,38 +6,62 @@ import DeviceTable from './components/DeviceTable.jsx'
+ export default function App() {
+   const [devices, setDevices] = useState([])
+   const [types, setTypes] = useState(['PC'])
+-  const [formKey, setFormKey] = useState(0)
++  const [form, setForm] = useState({ key: 0, initial: {} })
+   const [formError, setFormError] = useState('')
++  const [suggestion, setSuggestion] = useState('')
+   const [loadError, setLoadError] = useState('')
+ 
+   const loadDevices = () =>
+-    api.listDevices().then(setDevices)
+-      .catch(() => setLoadError('Cannot reach the server. Is it running on port 3001?'))
++    api.listDevices().then(setDevices).catch(() => setLoadError('Cannot reach the server. Is it running on port 3001?'))
+ 
+   useEffect(() => {
+     api.types().then(setTypes).catch(() => {})
+     loadDevices()
+   }, [])
+ 
++  const resetForm = (initial = {}) => {
++    setFormError(''); setSuggestion('')
++    setForm((f) => ({ key: f.key + 1, initial }))
++  }
++
+   async function save(values) {
+-    setFormError('')
++    setFormError(''); setSuggestion('')
+     try {
+-      await api.createDevice(values)
+-      setFormKey((k) => k + 1)
++      if (form.initial.id) await api.updateDevice(form.initial.id, values)
++      else await api.createDevice(values)
++      resetForm()
+       await loadDevices()
+     } catch (e) {
+       setFormError(e.message)
++      setSuggestion(e.suggestion || '')
+     }
+   }
+ 
++  async function remove(d) {
++    if (!window.confirm(`Delete ${d.name} (${d.ip})?`)) return
++    await api.deleteDevice(d.id)
++    if (form.initial.id === d.id) resetForm()
++    loadDevices()
++  }
++
+   return (
+     <main>
+       <h1>IP address manager</h1>
++      <p className="sub">Keep track of which device uses which address, and spot conflicts before they happen.</p>
+       {loadError && <p className="error" role="alert">{loadError}</p>}
+-      <DeviceForm key={formKey} initial={{}} types={types} error={formError}
+-        onSave={save} onCancel={() => setFormKey((k) => k + 1)} />
++
++      <DeviceForm
++        key={form.key}
++        initial={form.initial}
++        types={types}
++        error={formError}
++        suggestion={suggestion}
++        onSave={save}
++        onCancel={() => resetForm()}
++      />
++
+       <h2>All devices</h2>
+-      <DeviceTable devices={devices} onEdit={() => {}} onDelete={() => {}} />
++      <DeviceTable devices={devices} onEdit={(d) => resetForm(d)} onDelete={remove} />
+     </main>
+   )
+ }
+-- 
+2.43.0
+

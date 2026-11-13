@@ -1,0 +1,120 @@
+From 49d908bc20b80964d22293af9f71e13b726d2010 Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Wed, 4 Nov 2026 05:42:06 +0000
+Subject: [PATCH] IP Address Manager update 12
+
+---
+ client/src/App.jsx                   | 23 +++++++++++-
+ client/src/components/DeviceForm.jsx | 53 ++++++++++++++++++++++++++++
+ 2 files changed, 75 insertions(+), 1 deletion(-)
+ create mode 100644 client/src/components/DeviceForm.jsx
+
+diff --git a/client/src/App.jsx b/client/src/App.jsx
+index 36173a8..a70202e 100644
+--- a/client/src/App.jsx
++++ b/client/src/App.jsx
+@@ -1,20 +1,41 @@
+ import { useEffect, useState } from 'react'
+ import { api } from './api.js'
++import DeviceForm from './components/DeviceForm.jsx'
+ import DeviceTable from './components/DeviceTable.jsx'
+ 
+ export default function App() {
+   const [devices, setDevices] = useState([])
++  const [types, setTypes] = useState(['PC'])
++  const [formKey, setFormKey] = useState(0)
++  const [formError, setFormError] = useState('')
+   const [loadError, setLoadError] = useState('')
+ 
+-  useEffect(() => {
++  const loadDevices = () =>
+     api.listDevices().then(setDevices)
+       .catch(() => setLoadError('Cannot reach the server. Is it running on port 3001?'))
++
++  useEffect(() => {
++    api.types().then(setTypes).catch(() => {})
++    loadDevices()
+   }, [])
+ 
++  async function save(values) {
++    setFormError('')
++    try {
++      await api.createDevice(values)
++      setFormKey((k) => k + 1)
++      await loadDevices()
++    } catch (e) {
++      setFormError(e.message)
++    }
++  }
++
+   return (
+     <main>
+       <h1>IP address manager</h1>
+       {loadError && <p className="error" role="alert">{loadError}</p>}
++      <DeviceForm key={formKey} initial={{}} types={types} error={formError}
++        onSave={save} onCancel={() => setFormKey((k) => k + 1)} />
+       <h2>All devices</h2>
+       <DeviceTable devices={devices} onEdit={() => {}} onDelete={() => {}} />
+     </main>
+diff --git a/client/src/components/DeviceForm.jsx b/client/src/components/DeviceForm.jsx
+new file mode 100644
+index 0000000..7d5c206
+--- /dev/null
++++ b/client/src/components/DeviceForm.jsx
+@@ -0,0 +1,53 @@
++import { useState } from 'react'
++
++const BLANK = { ip: '', name: '', type: 'PC', status: 'static', notes: '' }
++
++export default function DeviceForm({ initial, types, error, suggestion, onSave, onCancel }) {
++  const [v, setV] = useState({ ...BLANK, ...initial })
++  const set = (k) => (e) => setV({ ...v, [k]: e.target.value })
++  const editing = Boolean(initial && initial.id)
++
++  return (
++    <form className="form" onSubmit={(e) => { e.preventDefault(); onSave(v) }}>
++      <h2>{editing ? 'Edit device' : 'Add device'}</h2>
++      <div className="grid2">
++        <label>IP address
++          <input value={v.ip} onChange={set('ip')} placeholder="192.168.1.10" inputMode="decimal" required />
++        </label>
++        <label>Device name
++          <input value={v.name} onChange={set('name')} placeholder="Office printer" required />
++        </label>
++        <label>Type
++          <select value={v.type} onChange={set('type')}>
++            {types.map((t) => <option key={t}>{t}</option>)}
++          </select>
++        </label>
++        <label>Assignment
++          <select value={v.status} onChange={set('status')}>
++            <option value="static">Static</option>
++            <option value="dhcp">DHCP</option>
++          </select>
++        </label>
++      </div>
++      <label>Notes
++        <input value={v.notes} onChange={set('notes')} placeholder="Second floor, near the copier" />
++      </label>
++
++      {error && (
++        <p className="error" role="alert">
++          {error}{' '}
++          {suggestion && (
++            <button type="button" className="link" onClick={() => setV({ ...v, ip: suggestion })}>
++              Use {suggestion}
++            </button>
++          )}
++        </p>
++      )}
++
++      <div className="actions">
++        <button type="submit" className="primary">{editing ? 'Save changes' : 'Add device'}</button>
++        {(editing || v.ip || v.name) && <button type="button" onClick={onCancel}>Clear</button>}
++      </div>
++    </form>
++  )
++}
+-- 
+2.43.0
+

@@ -1,0 +1,76 @@
+From 3aa4aef8699b712a1715a811401158c120de2bc8 Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Wed, 4 Nov 2026 05:42:06 +0000
+Subject: [PATCH] IP Address Manager update 16
+
+---
+ client/src/styles.css | 54 +++++++++++++++++++++++++++++++++----------
+ 1 file changed, 42 insertions(+), 12 deletions(-)
+
+diff --git a/client/src/styles.css b/client/src/styles.css
+index 5a14995..43d8e9c 100644
+--- a/client/src/styles.css
++++ b/client/src/styles.css
+@@ -1,17 +1,47 @@
+-body { margin: 0; background: #f1f4f8; color: #17212f; font: 16px/1.5 system-ui, sans-serif; }
++:root {
++  --bg: #f1f4f8; --ink: #17212f; --mute: #556277; --card: #fff; --line: #d2d9e3;
++  --free: #0b7a75; --used: #c2610c; --err: #b42318;
++  color-scheme: light dark;
++}
++@media (prefers-color-scheme: dark) {
++  :root { --bg: #111823; --ink: #e5ebf4; --mute: #9aa7bb; --card: #19212f; --line: #2b374b;
++    --free: #3cc9c0; --used: #f0a35a; --err: #ff8a80; }
++}
++* { box-sizing: border-box; }
++body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
+ main { max-width: 860px; margin: 0 auto; padding: 22px 14px 48px; }
+-h1 { font-size: 1.6rem; margin: 0 0 12px; }
++h1 { font-size: 1.6rem; margin: 0 0 4px; line-height: 1.2; }
+ h2 { font-size: 1.05rem; margin: 26px 0 8px; }
+-label { display: block; font-size: .85rem; color: #556277; margin-bottom: 10px; }
+-input, select { display: block; width: 100%; margin-top: 4px; padding: 9px 11px; font: inherit;
+-  border: 1.5px solid #d2d9e3; border-radius: 6px; }
+-button { font: inherit; cursor: pointer; padding: 8px 13px; font-weight: 600;
+-  border: 1.5px solid #d2d9e3; border-radius: 6px; background: #fff; }
+-button.primary { background: #0b7a75; border-color: #0b7a75; color: #fff; }
+-.form { background: #fff; border: 1px solid #d2d9e3; border-radius: 8px; padding: 14px 16px; }
++.sub { color: var(--mute); margin: 0 0 16px; max-width: 52ch; }
++.mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
++label { display: block; font-size: .85rem; color: var(--mute); margin-bottom: 10px; }
++input, select, button { font: inherit; }
++input, select { display: block; width: 100%; margin-top: 4px; padding: 9px 11px; color: var(--ink);
++  background: var(--card); border: 1.5px solid var(--line); border-radius: 6px; }
++button { cursor: pointer; padding: 8px 13px; font-weight: 600; color: var(--ink);
++  background: var(--card); border: 1.5px solid var(--line); border-radius: 6px; }
++button.primary { background: var(--free); border-color: var(--free); color: #fff; }
++button.link { border: 0; background: none; padding: 0; color: var(--free); text-decoration: underline; }
++:focus-visible { outline: 3px solid var(--free); outline-offset: 2px; }
++.form { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
++.form h2 { margin-top: 0; }
+ .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+-.actions { display: flex; gap: 8px; }
+-.error { color: #b42318; }
++.actions { display: flex; gap: 8px; margin-top: 4px; }
++.error { color: var(--err); margin: 8px 0; font-size: .92rem; }
++.subnetbar { display: flex; gap: 8px; }
++.subnetbar input { margin-top: 0; max-width: 220px; }
++.stats { margin: 10px 0 6px; }
++.legend { display: flex; gap: 16px; font-size: .85rem; color: var(--mute); margin-bottom: 8px; }
++.legend i { display: inline-block; width: 14px; height: 14px; vertical-align: -2px; margin-right: 5px; padding: 0; }
++.cells { display: grid; grid-template-columns: repeat(auto-fill, minmax(34px, 1fr)); gap: 4px; }
++.cell { padding: 5px 0; font: .72rem ui-monospace, Menlo, monospace; text-align: center; border-radius: 4px; }
++.cell.free { background: none; border: 1.5px solid var(--free); color: var(--free); }
++.cell.used { background: var(--used); border: 1.5px solid var(--used); color: #fff; cursor: not-allowed; }
+ .scroll { overflow-x: auto; }
+ table { width: 100%; border-collapse: collapse; min-width: 560px; }
+-th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid #d2d9e3; }
++th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--line); font-size: .92rem; }
++th { color: var(--mute); font-weight: 600; }
++.rowbtns { white-space: nowrap; display: flex; gap: 6px; }
++.rowbtns button { padding: 4px 9px; font-size: .82rem; }
++.empty { color: var(--mute); }
++@media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } }
+-- 
+2.43.0
+

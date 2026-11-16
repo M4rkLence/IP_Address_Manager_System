@@ -1,0 +1,111 @@
+From 031318250c4e63575c754bf339b320fda25ad48a Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Wed, 4 Nov 2026 05:42:06 +0000
+Subject: [PATCH] IP Address Manager update 15
+
+---
+ client/src/App.jsx                   | 35 ++++++++++++++++++++++++++++
+ client/src/components/SubnetGrid.jsx | 24 +++++++++++++++++++
+ 2 files changed, 59 insertions(+)
+ create mode 100644 client/src/components/SubnetGrid.jsx
+
+diff --git a/client/src/App.jsx b/client/src/App.jsx
+index 2f7008c..b3253fe 100644
+--- a/client/src/App.jsx
++++ b/client/src/App.jsx
+@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
+ import { api } from './api.js'
+ import DeviceForm from './components/DeviceForm.jsx'
+ import DeviceTable from './components/DeviceTable.jsx'
++import SubnetGrid from './components/SubnetGrid.jsx'
+ 
+ export default function App() {
+   const [devices, setDevices] = useState([])
+@@ -9,6 +10,10 @@ export default function App() {
+   const [form, setForm] = useState({ key: 0, initial: {} })
+   const [formError, setFormError] = useState('')
+   const [suggestion, setSuggestion] = useState('')
++  const [cidrInput, setCidrInput] = useState('192.168.1.0/24')
++  const [cidr, setCidr] = useState('192.168.1.0/24')
++  const [subnet, setSubnet] = useState(null)
++  const [subnetError, setSubnetError] = useState('')
+   const [loadError, setLoadError] = useState('')
+ 
+   const loadDevices = () =>
+@@ -19,6 +24,13 @@ export default function App() {
+     loadDevices()
+   }, [])
+ 
++  // Redraw the subnet grid whenever the subnet or the device list changes.
++  useEffect(() => {
++    api.subnet(cidr)
++      .then((s) => { setSubnet(s); setSubnetError('') })
++      .catch((e) => { setSubnet(null); setSubnetError(e.message) })
++  }, [cidr, devices])
++
+   const resetForm = (initial = {}) => {
+     setFormError(''); setSuggestion('')
+     setForm((f) => ({ key: f.key + 1, initial }))
+@@ -60,6 +72,29 @@ export default function App() {
+         onCancel={() => resetForm()}
+       />
+ 
++      <h2>Subnet map</h2>
++      <form className="subnetbar" onSubmit={(e) => { e.preventDefault(); setCidr(cidrInput.trim()) }}>
++        <input value={cidrInput} onChange={(e) => setCidrInput(e.target.value)}
++          aria-label="Subnet in CIDR form" className="mono" />
++        <button type="submit">Show subnet</button>
++      </form>
++      {subnetError && <p className="error" role="alert">{subnetError}</p>}
++      {subnet && (
++        <>
++          <p className="stats">
++            <b>{subnet.usedCount}</b> of <b>{subnet.usable}</b> addresses used.
++            {subnet.nextFree
++              ? <> Next free: <button type="button" className="link mono" onClick={() => resetForm({ ip: subnet.nextFree })}>{subnet.nextFree}</button></>
++              : ' No free addresses left.'}
++          </p>
++          <div className="legend">
++            <span><i className="cell used" /> Used</span>
++            <span><i className="cell free" /> Free (tap to use)</span>
++          </div>
++          <SubnetGrid subnet={subnet} onPick={(ip) => resetForm({ ip })} />
++        </>
++      )}
++
+       <h2>All devices</h2>
+       <DeviceTable devices={devices} onEdit={(d) => resetForm(d)} onDelete={remove} />
+     </main>
+diff --git a/client/src/components/SubnetGrid.jsx b/client/src/components/SubnetGrid.jsx
+new file mode 100644
+index 0000000..79feb86
+--- /dev/null
++++ b/client/src/components/SubnetGrid.jsx
+@@ -0,0 +1,24 @@
++import { formatIp } from '../ip.js'
++
++export default function SubnetGrid({ subnet, onPick }) {
++  const names = new Map(subnet.used.map((u) => [u.ip, u.name]))
++  const cells = []
++  for (let n = subnet.firstNum; n <= subnet.lastNum; n++) {
++    const ip = formatIp(n)
++    const name = names.get(ip)
++    cells.push(
++      <button
++        key={n}
++        type="button"
++        className={'cell ' + (name ? 'used' : 'free')}
++        title={name ? `${ip} - ${name}` : `${ip} - free`}
++        aria-label={name ? `${ip} used by ${name}` : `${ip} free, tap to use`}
++        disabled={Boolean(name)}
++        onClick={() => onPick(ip)}
++      >
++        {n & 255}
++      </button>
++    )
++  }
++  return <div className="cells">{cells}</div>
++}
+-- 
+2.43.0
+

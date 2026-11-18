@@ -1,0 +1,140 @@
+From 60cd3719d83a3394c0b551e9e456df83d1282b5e Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Mon, 9 Nov 2026 06:28:26 +0000
+Subject: [PATCH] IP Address Manager update 22
+
+---
+ client/src/api.js                  | 16 +++++--
+ client/src/components/AuthForm.jsx | 71 ++++++++++++++++++++++++++++++
+ client/src/styles.css              |  5 +++
+ 3 files changed, 88 insertions(+), 4 deletions(-)
+ create mode 100644 client/src/components/AuthForm.jsx
+
+diff --git a/client/src/api.js b/client/src/api.js
+index 33341fa..bb8f155 100644
+--- a/client/src/api.js
++++ b/client/src/api.js
+@@ -1,11 +1,15 @@
+ async function request(path, options = {}) {
+-  const res = await fetch('/api' + path, {
+-    headers: { 'Content-Type': 'application/json' },
+-    ...options,
+-  })
++  let res
++  try {
++    // The login cookie is sent automatically because the app and API share one origin.
++    res = await fetch('/api' + path, { headers: { 'Content-Type': 'application/json' }, ...options })
++  } catch {
++    throw new Error('Cannot reach the server. Is it running on port 3001?')
++  }
+   const data = res.status === 204 ? null : await res.json().catch(() => null)
+   if (!res.ok) {
+     const err = new Error((data && data.error) || 'Request failed.')
++    err.status = res.status
+     err.suggestion = data && data.suggestion
+     throw err
+   }
+@@ -13,6 +17,10 @@ async function request(path, options = {}) {
+ }
+ 
+ export const api = {
++  me: () => request('/me'),
++  register: (c) => request('/register', { method: 'POST', body: JSON.stringify(c) }),
++  login: (c) => request('/login', { method: 'POST', body: JSON.stringify(c) }),
++  logout: () => request('/logout', { method: 'POST' }),
+   listDevices: () => request('/devices'),
+   types: () => request('/types'),
+   createDevice: (d) => request('/devices', { method: 'POST', body: JSON.stringify(d) }),
+diff --git a/client/src/components/AuthForm.jsx b/client/src/components/AuthForm.jsx
+new file mode 100644
+index 0000000..6b23e4f
+--- /dev/null
++++ b/client/src/components/AuthForm.jsx
+@@ -0,0 +1,71 @@
++import { useState } from 'react'
++
++export default function AuthForm({ onSubmit }) {
++  const [mode, setMode] = useState('login')
++  const [username, setUsername] = useState('')
++  const [password, setPassword] = useState('')
++  const [confirm, setConfirm] = useState('')
++  const [error, setError] = useState('')
++  const [busy, setBusy] = useState(false)
++  const register = mode === 'register'
++
++  async function submit(e) {
++    e.preventDefault()
++    setError('')
++    if (register && password !== confirm) return setError('Passwords do not match.')
++    setBusy(true)
++    try {
++      await onSubmit(mode, { username, password })
++    } catch (err) {
++      setError(err.message)
++      setBusy(false)
++    }
++  }
++
++  function switchMode() {
++    setMode(register ? 'login' : 'register')
++    setError('')
++    setPassword('')
++    setConfirm('')
++  }
++
++  return (
++    <main className="authpage">
++      <h1>IP address manager</h1>
++      <p className="sub">
++        {register ? 'Create an account. Your devices and IP list stay private to you.' : 'Log in to see your own IP addresses.'}
++      </p>
++      <form className="form" onSubmit={submit}>
++        <h2>{register ? 'Register' : 'Log in'}</h2>
++        <label>Username
++          <input value={username} onChange={(e) => setUsername(e.target.value)}
++            autoComplete="username" autoCapitalize="none" required />
++        </label>
++        <label>Password
++          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
++            autoComplete={register ? 'new-password' : 'current-password'}
++            minLength={register ? 8 : undefined} required />
++        </label>
++        {register && (
++          <label>Confirm password
++            <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)}
++              autoComplete="new-password" required />
++          </label>
++        )}
++        {register && <p className="hint">Use at least 8 characters.</p>}
++        {error && <p className="error" role="alert">{error}</p>}
++        <div className="actions">
++          <button type="submit" className="primary" disabled={busy}>
++            {busy ? 'Please wait...' : register ? 'Create account' : 'Log in'}
++          </button>
++        </div>
++      </form>
++      <p className="switch">
++        {register ? 'Already have an account? ' : 'New here? '}
++        <button type="button" className="link" onClick={switchMode}>
++          {register ? 'Log in' : 'Create an account'}
++        </button>
++      </p>
++    </main>
++  )
++}
+diff --git a/client/src/styles.css b/client/src/styles.css
+index 43d8e9c..685eca2 100644
+--- a/client/src/styles.css
++++ b/client/src/styles.css
+@@ -45,3 +45,8 @@ th { color: var(--mute); font-weight: 600; }
+ .rowbtns button { padding: 4px 9px; font-size: .82rem; }
+ .empty { color: var(--mute); }
+ @media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } }
++
++.authpage { max-width: 420px; }
++.hint { color: var(--mute); font-size: .85rem; margin: 0 0 8px; }
++.switch { margin-top: 14px; }
++button:disabled { opacity: .6; cursor: wait; }
+-- 
+2.43.0
+

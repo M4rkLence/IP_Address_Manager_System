@@ -1,0 +1,274 @@
+From 3dde8239b2431805f12286b18edd148d400097dd Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Mon, 9 Nov 2026 06:28:26 +0000
+Subject: [PATCH] IP Address Manager update 23
+
+---
+ client/src/App.jsx       | 103 +++++-----------------------------
+ client/src/Dashboard.jsx | 118 +++++++++++++++++++++++++++++++++++++++
+ client/src/styles.css    |   5 ++
+ 3 files changed, 138 insertions(+), 88 deletions(-)
+ create mode 100644 client/src/Dashboard.jsx
+
+diff --git a/client/src/App.jsx b/client/src/App.jsx
+index b3253fe..03c89af 100644
+--- a/client/src/App.jsx
++++ b/client/src/App.jsx
+@@ -1,102 +1,29 @@
+ import { useEffect, useState } from 'react'
+ import { api } from './api.js'
+-import DeviceForm from './components/DeviceForm.jsx'
+-import DeviceTable from './components/DeviceTable.jsx'
+-import SubnetGrid from './components/SubnetGrid.jsx'
++import AuthForm from './components/AuthForm.jsx'
++import Dashboard from './Dashboard.jsx'
+ 
+ export default function App() {
+-  const [devices, setDevices] = useState([])
+-  const [types, setTypes] = useState(['PC'])
+-  const [form, setForm] = useState({ key: 0, initial: {} })
+-  const [formError, setFormError] = useState('')
+-  const [suggestion, setSuggestion] = useState('')
+-  const [cidrInput, setCidrInput] = useState('192.168.1.0/24')
+-  const [cidr, setCidr] = useState('192.168.1.0/24')
+-  const [subnet, setSubnet] = useState(null)
+-  const [subnetError, setSubnetError] = useState('')
+-  const [loadError, setLoadError] = useState('')
+-
+-  const loadDevices = () =>
+-    api.listDevices().then(setDevices).catch(() => setLoadError('Cannot reach the server. Is it running on port 3001?'))
++  // undefined = still checking, null = logged out, object = logged in
++  const [user, setUser] = useState(undefined)
+ 
+   useEffect(() => {
+-    api.types().then(setTypes).catch(() => {})
+-    loadDevices()
++    api.me().then(setUser).catch(() => setUser(null))
+   }, [])
+ 
+-  // Redraw the subnet grid whenever the subnet or the device list changes.
+-  useEffect(() => {
+-    api.subnet(cidr)
+-      .then((s) => { setSubnet(s); setSubnetError('') })
+-      .catch((e) => { setSubnet(null); setSubnetError(e.message) })
+-  }, [cidr, devices])
+-
+-  const resetForm = (initial = {}) => {
+-    setFormError(''); setSuggestion('')
+-    setForm((f) => ({ key: f.key + 1, initial }))
++  async function authenticate(mode, creds) {
++    const u = mode === 'register' ? await api.register(creds) : await api.login(creds)
++    setUser(u)
+   }
+ 
+-  async function save(values) {
+-    setFormError(''); setSuggestion('')
+-    try {
+-      if (form.initial.id) await api.updateDevice(form.initial.id, values)
+-      else await api.createDevice(values)
+-      resetForm()
+-      await loadDevices()
+-    } catch (e) {
+-      setFormError(e.message)
+-      setSuggestion(e.suggestion || '')
+-    }
++  async function logout() {
++    try { await api.logout() } catch { /* even if the call fails, leave the screen */ }
++    setUser(null)
+   }
+ 
+-  async function remove(d) {
+-    if (!window.confirm(`Delete ${d.name} (${d.ip})?`)) return
+-    await api.deleteDevice(d.id)
+-    if (form.initial.id === d.id) resetForm()
+-    loadDevices()
+-  }
+-
+-  return (
+-    <main>
+-      <h1>IP address manager</h1>
+-      <p className="sub">Keep track of which device uses which address, and spot conflicts before they happen.</p>
+-      {loadError && <p className="error" role="alert">{loadError}</p>}
+-
+-      <DeviceForm
+-        key={form.key}
+-        initial={form.initial}
+-        types={types}
+-        error={formError}
+-        suggestion={suggestion}
+-        onSave={save}
+-        onCancel={() => resetForm()}
+-      />
+-
+-      <h2>Subnet map</h2>
+-      <form className="subnetbar" onSubmit={(e) => { e.preventDefault(); setCidr(cidrInput.trim()) }}>
+-        <input value={cidrInput} onChange={(e) => setCidrInput(e.target.value)}
+-          aria-label="Subnet in CIDR form" className="mono" />
+-        <button type="submit">Show subnet</button>
+-      </form>
+-      {subnetError && <p className="error" role="alert">{subnetError}</p>}
+-      {subnet && (
+-        <>
+-          <p className="stats">
+-            <b>{subnet.usedCount}</b> of <b>{subnet.usable}</b> addresses used.
+-            {subnet.nextFree
+-              ? <> Next free: <button type="button" className="link mono" onClick={() => resetForm({ ip: subnet.nextFree })}>{subnet.nextFree}</button></>
+-              : ' No free addresses left.'}
+-          </p>
+-          <div className="legend">
+-            <span><i className="cell used" /> Used</span>
+-            <span><i className="cell free" /> Free (tap to use)</span>
+-          </div>
+-          <SubnetGrid subnet={subnet} onPick={(ip) => resetForm({ ip })} />
+-        </>
+-      )}
++  if (user === undefined) return <main><p className="sub">Loading...</p></main>
++  if (user === null) return <AuthForm onSubmit={authenticate} />
+ 
+-      <h2>All devices</h2>
+-      <DeviceTable devices={devices} onEdit={(d) => resetForm(d)} onDelete={remove} />
+-    </main>
+-  )
++  // key={user.id} gives each person a fresh dashboard, so nothing carries over between accounts
++  return <Dashboard key={user.id} user={user} onLogout={logout} onExpired={() => setUser(null)} />
+ }
+diff --git a/client/src/Dashboard.jsx b/client/src/Dashboard.jsx
+new file mode 100644
+index 0000000..f4aafc2
+--- /dev/null
++++ b/client/src/Dashboard.jsx
+@@ -0,0 +1,118 @@
++import { useEffect, useState } from 'react'
++import { api } from './api.js'
++import DeviceForm from './components/DeviceForm.jsx'
++import DeviceTable from './components/DeviceTable.jsx'
++import SubnetGrid from './components/SubnetGrid.jsx'
++
++export default function Dashboard({ user, onLogout, onExpired }) {
++  const [devices, setDevices] = useState([])
++  const [types, setTypes] = useState(['PC'])
++  const [form, setForm] = useState({ key: 0, initial: {} })
++  const [formError, setFormError] = useState('')
++  const [suggestion, setSuggestion] = useState('')
++  const [cidrInput, setCidrInput] = useState('192.168.1.0/24')
++  const [cidr, setCidr] = useState('192.168.1.0/24')
++  const [subnet, setSubnet] = useState(null)
++  const [subnetError, setSubnetError] = useState('')
++  const [loadError, setLoadError] = useState('')
++
++  const loadDevices = () =>
++    api.listDevices().then(setDevices)
++      .catch((e) => (e.status === 401 ? onExpired() : setLoadError(e.message)))
++
++  useEffect(() => {
++    api.types().then(setTypes).catch(() => {})
++    loadDevices()
++  }, [])
++
++  // Redraw the subnet grid whenever the subnet or the device list changes.
++  useEffect(() => {
++    api.subnet(cidr)
++      .then((s) => { setSubnet(s); setSubnetError('') })
++      .catch((e) => {
++        if (e.status === 401) return onExpired()
++        setSubnet(null); setSubnetError(e.message)
++      })
++  }, [cidr, devices])
++
++  const resetForm = (initial = {}) => {
++    setFormError(''); setSuggestion('')
++    setForm((f) => ({ key: f.key + 1, initial }))
++  }
++
++  async function save(values) {
++    setFormError(''); setSuggestion('')
++    try {
++      if (form.initial.id) await api.updateDevice(form.initial.id, values)
++      else await api.createDevice(values)
++      resetForm()
++      await loadDevices()
++    } catch (e) {
++      if (e.status === 401) return onExpired()
++      setFormError(e.message)
++      setSuggestion(e.suggestion || '')
++    }
++  }
++
++  async function remove(d) {
++    if (!window.confirm(`Delete ${d.name} (${d.ip})?`)) return
++    try {
++      await api.deleteDevice(d.id)
++    } catch (e) {
++      if (e.status === 401) return onExpired()
++      throw e
++    }
++    if (form.initial.id === d.id) resetForm()
++    loadDevices()
++  }
++
++  return (
++    <main>
++      <header className="topbar">
++        <h1>IP address manager</h1>
++        <div className="who">
++          <span>Signed in as <b>{user.username}</b></span>
++          <button type="button" onClick={onLogout}>Log out</button>
++        </div>
++      </header>
++      <p className="sub">Keep track of which device uses which address, and spot conflicts before they happen.</p>
++      {loadError && <p className="error" role="alert">{loadError}</p>}
++
++      <DeviceForm
++        key={form.key}
++        initial={form.initial}
++        types={types}
++        error={formError}
++        suggestion={suggestion}
++        onSave={save}
++        onCancel={() => resetForm()}
++      />
++
++      <h2>Subnet map</h2>
++      <form className="subnetbar" onSubmit={(e) => { e.preventDefault(); setCidr(cidrInput.trim()) }}>
++        <input value={cidrInput} onChange={(e) => setCidrInput(e.target.value)}
++          aria-label="Subnet in CIDR form" className="mono" />
++        <button type="submit">Show subnet</button>
++      </form>
++      {subnetError && <p className="error" role="alert">{subnetError}</p>}
++      {subnet && (
++        <>
++          <p className="stats">
++            <b>{subnet.usedCount}</b> of <b>{subnet.usable}</b> addresses used.
++            {subnet.nextFree
++              ? <> Next free: <button type="button" className="link mono" onClick={() => resetForm({ ip: subnet.nextFree })}>{subnet.nextFree}</button></>
++              : ' No free addresses left.'}
++          </p>
++          <div className="legend">
++            <span><i className="cell used" /> Used</span>
++            <span><i className="cell free" /> Free (tap to use)</span>
++          </div>
++          <SubnetGrid subnet={subnet} onPick={(ip) => resetForm({ ip })} />
++        </>
++      )}
++
++      <h2>All devices</h2>
++      <DeviceTable devices={devices} onEdit={(d) => resetForm(d)} onDelete={remove} />
++    </main>
++  )
++}
+diff --git a/client/src/styles.css b/client/src/styles.css
+index 685eca2..6fbe74e 100644
+--- a/client/src/styles.css
++++ b/client/src/styles.css
+@@ -50,3 +50,8 @@ th { color: var(--mute); font-weight: 600; }
+ .hint { color: var(--mute); font-size: .85rem; margin: 0 0 8px; }
+ .switch { margin-top: 14px; }
+ button:disabled { opacity: .6; cursor: wait; }
++
++.topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
++.who { display: flex; align-items: center; gap: 10px; font-size: .9rem; color: var(--mute); }
++.who b { color: var(--ink); }
++.who button { padding: 5px 11px; font-size: .85rem; }
+-- 
+2.43.0
+

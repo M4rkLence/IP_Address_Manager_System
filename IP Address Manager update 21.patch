@@ -1,0 +1,222 @@
+From 96ca9fd3b20c1b6cb16b189736436d06654b4585 Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Mon, 9 Nov 2026 06:27:43 +0000
+Subject: [PATCH] IP Address Manager update 21
+
+---
+ server/db.js    | 111 ++++++++++++++++++++++++++----------------------
+ server/index.js |  36 +++++++++-------
+ 2 files changed, 81 insertions(+), 66 deletions(-)
+
+diff --git a/server/db.js b/server/db.js
+index 3e2a9f5..0ec2817 100644
+--- a/server/db.js
++++ b/server/db.js
+@@ -5,56 +5,7 @@ import { formatIp } from './ip.js'
+ const file = process.env.DB_FILE || fileURLToPath(new URL('./data.db', import.meta.url))
+ const db = new DatabaseSync(file)
+ 
+-db.exec(`
+-  CREATE TABLE IF NOT EXISTS devices (
+-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+-    ip         INTEGER NOT NULL UNIQUE,
+-    name       TEXT    NOT NULL,
+-    type       TEXT    NOT NULL,
+-    status     TEXT    NOT NULL,
+-    notes      TEXT    NOT NULL DEFAULT '',
+-    created_at TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+-  )
+-`)
+-
+-export const TYPES = ['Router', 'Switch', 'Server', 'PC', 'Printer', 'Phone', 'Other']
+-export const STATUSES = ['static', 'dhcp']
+-
+-const toDevice = (r) => ({
+-  id: Number(r.id), ip: formatIp(r.ip), ipNum: r.ip,
+-  name: r.name, type: r.type, status: r.status, notes: r.notes,
+-})
+-
+-export const listDevices = () =>
+-  db.prepare('SELECT * FROM devices ORDER BY ip').all().map(toDevice)
+-
+-export const getDevice = (id) => {
+-  const r = db.prepare('SELECT * FROM devices WHERE id = ?').get(id)
+-  return r ? toDevice(r) : null
+-}
+-
+-export const findByIp = (ip) => {
+-  const r = db.prepare('SELECT * FROM devices WHERE ip = ?').get(ip)
+-  return r ? toDevice(r) : null
+-}
+-
+-export const devicesInRange = (from, to) =>
+-  db.prepare('SELECT * FROM devices WHERE ip BETWEEN ? AND ? ORDER BY ip').all(from, to).map(toDevice)
+-
+-export function createDevice(d) {
+-  const r = db.prepare('INSERT INTO devices (ip, name, type, status, notes) VALUES (?, ?, ?, ?, ?)')
+-    .run(d.ip, d.name, d.type, d.status, d.notes)
+-  return getDevice(Number(r.lastInsertRowid))
+-}
+-
+-export function updateDevice(id, d) {
+-  db.prepare('UPDATE devices SET ip = ?, name = ?, type = ?, status = ?, notes = ? WHERE id = ?')
+-    .run(d.ip, d.name, d.type, d.status, d.notes, id)
+-  return getDevice(id)
+-}
+-
+-export const deleteDevice = (id) =>
+-  db.prepare('DELETE FROM devices WHERE id = ?').run(id).changes > 0
++db.exec('PRAGMA foreign_keys = ON')
+ 
+ db.exec(`
+   CREATE TABLE IF NOT EXISTS users (
+@@ -95,3 +46,63 @@ export function getSessionUser(tokenHash) {
+ export function deleteSession(tokenHash) {
+   db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash)
+ }
++
++// Older versions stored devices without an owner. Those rows cannot be given to
++// anyone, so the old table is dropped (development data only).
++const cols = db.prepare('PRAGMA table_info(devices)').all()
++if (cols.length && !cols.some((c) => c.name === 'user_id')) db.exec('DROP TABLE devices')
++
++db.exec(`
++  CREATE TABLE IF NOT EXISTS devices (
++    id         INTEGER PRIMARY KEY AUTOINCREMENT,
++    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
++    ip         INTEGER NOT NULL,
++    name       TEXT    NOT NULL,
++    type       TEXT    NOT NULL,
++    status     TEXT    NOT NULL,
++    notes      TEXT    NOT NULL DEFAULT '',
++    created_at TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    UNIQUE (user_id, ip)
++  )
++`)
++
++export const TYPES = ['Router', 'Switch', 'Server', 'PC', 'Printer', 'Phone', 'Other']
++export const STATUSES = ['static', 'dhcp']
++
++const toDevice = (r) => ({
++  id: Number(r.id), ip: formatIp(r.ip), ipNum: r.ip,
++  name: r.name, type: r.type, status: r.status, notes: r.notes,
++})
++
++// Every query below filters by user_id, so people only ever see their own devices.
++export const listDevices = (userId) =>
++  db.prepare('SELECT * FROM devices WHERE user_id = ? ORDER BY ip').all(userId).map(toDevice)
++
++export const getDevice = (id, userId) => {
++  const r = db.prepare('SELECT * FROM devices WHERE id = ? AND user_id = ?').get(id, userId)
++  return r ? toDevice(r) : null
++}
++
++export const findByIp = (userId, ip) => {
++  const r = db.prepare('SELECT * FROM devices WHERE user_id = ? AND ip = ?').get(userId, ip)
++  return r ? toDevice(r) : null
++}
++
++export const devicesInRange = (userId, from, to) =>
++  db.prepare('SELECT * FROM devices WHERE user_id = ? AND ip BETWEEN ? AND ? ORDER BY ip')
++    .all(userId, from, to).map(toDevice)
++
++export function createDevice(userId, d) {
++  const r = db.prepare('INSERT INTO devices (user_id, ip, name, type, status, notes) VALUES (?, ?, ?, ?, ?, ?)')
++    .run(userId, d.ip, d.name, d.type, d.status, d.notes)
++  return getDevice(Number(r.lastInsertRowid), userId)
++}
++
++export function updateDevice(id, userId, d) {
++  db.prepare('UPDATE devices SET ip = ?, name = ?, type = ?, status = ?, notes = ? WHERE id = ? AND user_id = ?')
++    .run(d.ip, d.name, d.type, d.status, d.notes, id, userId)
++  return getDevice(id, userId)
++}
++
++export const deleteDevice = (id, userId) =>
++  db.prepare('DELETE FROM devices WHERE id = ? AND user_id = ?').run(id, userId).changes > 0
+diff --git a/server/index.js b/server/index.js
+index e940041..d029ebf 100644
+--- a/server/index.js
++++ b/server/index.js
+@@ -30,24 +30,24 @@ function readJson(req) {
+ }
+ 
+ // First unused address after `ip`, staying inside the same /24.
+-function suggestFree(ip) {
++function suggestFree(userId, ip) {
+   const end = (ip >>> 8) * 256 + 254 // not << 8, which goes negative for big numbers
+-  const used = new Set(devicesInRange(ip, end).map((d) => d.ipNum))
++  const used = new Set(devicesInRange(userId, ip, end).map((d) => d.ipNum))
+   for (let n = ip + 1; n <= end; n++) if (!used.has(n)) return formatIp(n)
+   return null
+ }
+ 
+-function conflict(ip, ownId) {
+-  const other = findByIp(ip)
++function conflict(userId, ip, ownId) {
++  const other = findByIp(userId, ip)
+   if (!other || other.id === ownId) return null
+-  return { error: `${other.ip} is already used by ${other.name}.`, suggestion: suggestFree(ip) }
++  return { error: `${other.ip} is already used by ${other.name}.`, suggestion: suggestFree(userId, ip) }
+ }
+ 
+-function subnetInfo(cidrText) {
++function subnetInfo(userId, cidrText) {
+   const c = parseCidr(cidrText)
+   if (!c) return { status: 400, body: { error: 'Subnet must look like 192.168.1.0/24.' } }
+   if (c.total > MAX_GRID) return { status: 400, body: { error: 'Subnet too large to display. Use /22 or smaller.' } }
+-  const used = devicesInRange(c.first, c.last).map((d) => ({ id: d.id, ip: d.ip, name: d.name }))
++  const used = devicesInRange(userId, c.first, c.last).map((d) => ({ id: d.id, ip: d.ip, name: d.name }))
+   const usedSet = new Set(used.map((u) => u.ip))
+   let nextFree = null
+   for (let n = c.first; n <= c.last; n++) {
+@@ -143,33 +143,37 @@ const server = http.createServer(async (req, res) => {
+     }
+ 
+     if (path === '/api/types' && method === 'GET') return send(res, 200, TYPES)
+-    if (path === '/api/devices' && method === 'GET') return send(res, 200, listDevices())
++    // Everything below needs a logged-in user.
++    const user = currentUser(req)
++    if (!user) return send(res, 401, { error: 'Please log in.' })
++
++    if (path === '/api/devices' && method === 'GET') return send(res, 200, listDevices(user.id))
+ 
+     if (path === '/api/devices' && method === 'POST') {
+       const { error, value } = validateDevice(await readJson(req))
+       if (error) return send(res, 400, { error })
+-      const dup = conflict(value.ip, null)
++      const dup = conflict(user.id, value.ip, null)
+       if (dup) return send(res, 409, dup)
+-      return send(res, 201, createDevice(value))
++      return send(res, 201, createDevice(user.id, value))
+     }
+ 
+     const m = path.match(/^\/api\/devices\/(\d+)$/)
+     if (m) {
+       const id = Number(m[1])
+-      if (!getDevice(id)) return send(res, 404, { error: 'Device not found.' })
+-      if (method === 'GET') return send(res, 200, getDevice(id))
++      if (!getDevice(id, user.id)) return send(res, 404, { error: 'Device not found.' })
++      if (method === 'GET') return send(res, 200, getDevice(id, user.id))
+       if (method === 'PUT') {
+         const { error, value } = validateDevice(await readJson(req))
+         if (error) return send(res, 400, { error })
+-        const dup = conflict(value.ip, id)
++        const dup = conflict(user.id, value.ip, id)
+         if (dup) return send(res, 409, dup)
+-        return send(res, 200, updateDevice(id, value))
++        return send(res, 200, updateDevice(id, user.id, value))
+       }
+-      if (method === 'DELETE') { deleteDevice(id); return send(res, 204, null) }
++      if (method === 'DELETE') { deleteDevice(id, user.id); return send(res, 204, null) }
+     }
+ 
+     if (path === '/api/subnet' && method === 'GET') {
+-      const r = subnetInfo(url.searchParams.get('cidr') || '')
++      const r = subnetInfo(user.id, url.searchParams.get('cidr') || '')
+       return send(res, r.status, r.body)
+     }
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,60 @@
+From 4ba6760529adf83f83fded4a8f3a9129367035c7 Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Mon, 9 Nov 2026 06:27:43 +0000
+Subject: [PATCH] IP Address Manager update 19
+
+---
+ server/db.js | 40 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 40 insertions(+)
+
+diff --git a/server/db.js b/server/db.js
+index 3383654..3e2a9f5 100644
+--- a/server/db.js
++++ b/server/db.js
+@@ -55,3 +55,43 @@ export function updateDevice(id, d) {
+ 
+ export const deleteDevice = (id) =>
+   db.prepare('DELETE FROM devices WHERE id = ?').run(id).changes > 0
++
++db.exec(`
++  CREATE TABLE IF NOT EXISTS users (
++    id            INTEGER PRIMARY KEY AUTOINCREMENT,
++    username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
++    password_hash TEXT NOT NULL,
++    created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
++  );
++  CREATE TABLE IF NOT EXISTS sessions (
++    token_hash TEXT PRIMARY KEY,
++    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
++    expires_at INTEGER NOT NULL
++  );
++`)
++
++export function createUser(username, passwordHash) {
++  const r = db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(username, passwordHash)
++  return { id: Number(r.lastInsertRowid), username }
++}
++
++export function getUserByUsername(username) {
++  const r = db.prepare('SELECT * FROM users WHERE username = ?').get(username)
++  return r ? { id: Number(r.id), username: r.username, passwordHash: r.password_hash } : null
++}
++
++export function createSession(userId, tokenHash, expiresAt) {
++  db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now()) // tidy old sessions
++  db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run(tokenHash, userId, expiresAt)
++}
++
++export function getSessionUser(tokenHash) {
++  const r = db.prepare(
++    'SELECT u.id, u.username FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?'
++  ).get(tokenHash, Date.now())
++  return r ? { id: Number(r.id), username: r.username } : null
++}
++
++export function deleteSession(tokenHash) {
++  db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash)
++}
+-- 
+2.43.0
+

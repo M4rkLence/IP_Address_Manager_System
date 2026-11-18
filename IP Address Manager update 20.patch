@@ -1,0 +1,121 @@
+From d293e012f689c572353e465934d1195c18ad55e4 Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Mon, 9 Nov 2026 06:27:43 +0000
+Subject: [PATCH] IP Address Manager update 20
+
+---
+ server/index.js | 77 +++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 75 insertions(+), 2 deletions(-)
+
+diff --git a/server/index.js b/server/index.js
+index 0c34c8c..e940041 100644
+--- a/server/index.js
++++ b/server/index.js
+@@ -1,16 +1,18 @@
+ import http from 'node:http'
+ import { formatIp, parseCidr } from './ip.js'
+ import { validateDevice } from './validate.js'
++import { hashPassword, verifyPassword, hashToken, newToken, validateCredentials } from './auth.js'
+ import {
+   listDevices, getDevice, findByIp, devicesInRange,
+   createDevice, updateDevice, deleteDevice, TYPES,
++  createUser, getUserByUsername, createSession, getSessionUser, deleteSession,
+ } from './db.js'
+ 
+ const PORT = process.env.PORT || 3001
+ const MAX_GRID = 1024 // largest subnet we draw (a /22)
+ 
+-function send(res, status, data) {
+-  res.writeHead(status, { 'Content-Type': 'application/json' })
++function send(res, status, data, headers = {}) {
++  res.writeHead(status, { 'Content-Type': 'application/json', ...headers })
+   res.end(data === null ? '' : JSON.stringify(data))
+ }
+ 
+@@ -63,12 +65,83 @@ function subnetInfo(cidrText) {
+   }
+ }
+ 
++// ---------- sessions (HttpOnly cookie holding a random token) ----------
++const SESSION_DAYS = 7
++
++function getToken(req) {
++  const m = (req.headers.cookie || '').match(/(?:^|;\s*)sid=([a-f0-9]{64})/)
++  return m ? m[1] : null
++}
++
++// HttpOnly: page scripts cannot read it. SameSite=Lax: other sites cannot send it with a POST.
++const cookie = (value, maxAge) => `sid=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}`
++
++function currentUser(req) {
++  const token = getToken(req)
++  return token ? getSessionUser(hashToken(token)) : null
++}
++
++function startSession(res, status, user) {
++  const token = newToken()
++  createSession(user.id, hashToken(token), Date.now() + SESSION_DAYS * 86_400_000)
++  return send(res, status, { id: user.id, username: user.username },
++    { 'Set-Cookie': cookie(token, SESSION_DAYS * 86_400) })
++}
++
++// ---------- slow down password guessing ----------
++const WINDOW_MS = 15 * 60_000
++const MAX_FAILS = 10
++const failures = new Map()
++const DUMMY_HASH = hashPassword('dummy-password') // so unknown usernames take as long as real ones
++
++function tooManyAttempts(key) {
++  const f = failures.get(key)
++  if (!f) return false
++  if (Date.now() - f.first > WINDOW_MS) { failures.delete(key); return false }
++  return f.count >= MAX_FAILS
++}
++function recordFailure(key) {
++  const f = failures.get(key)
++  if (!f || Date.now() - f.first > WINDOW_MS) failures.set(key, { count: 1, first: Date.now() })
++  else f.count++
++}
++
+ const server = http.createServer(async (req, res) => {
+   try {
+     const url = new URL(req.url, 'http://localhost')
+     const path = url.pathname
+     const method = req.method
+ 
++    if (path === '/api/register' && method === 'POST') {
++      const { error, value } = validateCredentials(await readJson(req), true)
++      if (error) return send(res, 400, { error })
++      if (getUserByUsername(value.username)) return send(res, 409, { error: 'That username is already taken.' })
++      return startSession(res, 201, createUser(value.username, hashPassword(value.password)))
++    }
++
++    if (path === '/api/login' && method === 'POST') {
++      const { error, value } = validateCredentials(await readJson(req), false)
++      if (error) return send(res, 400, { error })
++      const key = `${req.socket.remoteAddress}|${value.username.toLowerCase()}`
++      if (tooManyAttempts(key)) return send(res, 429, { error: 'Too many attempts. Try again in a few minutes.' })
++      const user = getUserByUsername(value.username)
++      const ok = verifyPassword(value.password, user ? user.passwordHash : DUMMY_HASH)
++      if (!user || !ok) { recordFailure(key); return send(res, 401, { error: 'Wrong username or password.' }) }
++      failures.delete(key)
++      return startSession(res, 200, user)
++    }
++
++    if (path === '/api/logout' && method === 'POST') {
++      const token = getToken(req)
++      if (token) deleteSession(hashToken(token))
++      return send(res, 204, null, { 'Set-Cookie': cookie('', 0) })
++    }
++
++    if (path === '/api/me' && method === 'GET') {
++      const user = currentUser(req)
++      return user ? send(res, 200, user) : send(res, 401, { error: 'Please log in.' })
++    }
++
+     if (path === '/api/types' && method === 'GET') return send(res, 200, TYPES)
+     if (path === '/api/devices' && method === 'GET') return send(res, 200, listDevices())
+ 
+-- 
+2.43.0
+

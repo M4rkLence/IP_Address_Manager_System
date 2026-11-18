@@ -1,0 +1,210 @@
+From 5c276f33e8bfd882377121799406f2e9cdbb06a4 Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Mon, 9 Nov 2026 06:37:10 +0000
+Subject: [PATCH] IP Address Manager update 28
+
+---
+ client/src/Dashboard.jsx              |   4 +-
+ client/src/components/DeviceList.jsx  | 131 ++++++++++++++++++++++++++
+ client/src/components/DeviceTable.jsx |  29 ------
+ 3 files changed, 133 insertions(+), 31 deletions(-)
+ create mode 100644 client/src/components/DeviceList.jsx
+ delete mode 100644 client/src/components/DeviceTable.jsx
+
+diff --git a/client/src/Dashboard.jsx b/client/src/Dashboard.jsx
+index d33eb34..65de299 100644
+--- a/client/src/Dashboard.jsx
++++ b/client/src/Dashboard.jsx
+@@ -5,7 +5,7 @@ import Icon from './components/Icon.jsx'
+ import Modal from './components/Modal.jsx'
+ import StatCards from './components/StatCards.jsx'
+ import DeviceForm from './components/DeviceForm.jsx'
+-import DeviceTable from './components/DeviceTable.jsx'
++import DeviceList from './components/DeviceList.jsx'
+ import SubnetGrid from './components/SubnetGrid.jsx'
+ 
+ export default function Dashboard({ user, onLogout, onExpired }) {
+@@ -121,7 +121,7 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+ 
+         <section className="card">
+           <div className="card-head"><h2>All devices</h2></div>
+-          <DeviceTable devices={devices} onEdit={(d) => openForm(d)} onDelete={remove} />
++          <DeviceList devices={devices} onAdd={() => openForm()} onEdit={(d) => openForm(d)} onDelete={remove} />
+         </section>
+       </main>
+ 
+diff --git a/client/src/components/DeviceList.jsx b/client/src/components/DeviceList.jsx
+new file mode 100644
+index 0000000..638fb99
+--- /dev/null
++++ b/client/src/components/DeviceList.jsx
+@@ -0,0 +1,131 @@
++import { useEffect, useMemo, useRef, useState } from 'react'
++import Icon from './Icon.jsx'
++
++const TYPE_ICONS = { Router: 'router', Switch: 'switch', Server: 'server', PC: 'pc', Printer: 'printer', Phone: 'phone', Other: 'other' }
++const COLUMNS = [['ipNum', 'IP address'], ['name', 'Name'], ['type', 'Type'], ['status', 'Assignment'], ['notes', 'Notes']]
++
++function toCsv(rows) {
++  const q = (v) => `"${String(v).replace(/"/g, '""')}"`
++  const lines = rows.map((d) => [d.ip, d.name, d.type, d.status, d.notes].map(q).join(','))
++  return ['IP address,Name,Type,Assignment,Notes', ...lines].join('\n')
++}
++
++export default function DeviceList({ devices, onAdd, onEdit, onDelete }) {
++  const [query, setQuery] = useState('')
++  const [type, setType] = useState('All')
++  const [sort, setSort] = useState({ key: 'ipNum', dir: 1 })
++  const searchRef = useRef(null)
++
++  // Press "/" anywhere to jump to the search box.
++  useEffect(() => {
++    const onKey = (e) => {
++      if (e.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
++        e.preventDefault()
++        if (searchRef.current) searchRef.current.focus()
++      }
++    }
++    window.addEventListener('keydown', onKey)
++    return () => window.removeEventListener('keydown', onKey)
++  }, [])
++
++  const types = useMemo(() => ['All', ...new Set(devices.map((d) => d.type))], [devices])
++  const activeType = types.includes(type) ? type : 'All'
++
++  const rows = useMemo(() => {
++    const q = query.trim().toLowerCase()
++    return devices
++      .filter((d) => (activeType === 'All' || d.type === activeType) &&
++        (!q || [d.ip, d.name, d.type, d.status, d.notes].some((v) => String(v).toLowerCase().includes(q))))
++      .sort((a, b) => {
++        const x = a[sort.key], y = b[sort.key]
++        return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y))) * sort.dir
++      })
++  }, [devices, query, activeType, sort])
++
++  const toggleSort = (key) => setSort((s) => ({ key, dir: s.key === key ? -s.dir : 1 }))
++
++  function exportCsv() {
++    const url = URL.createObjectURL(new Blob([toCsv(rows)], { type: 'text/csv' }))
++    const a = document.createElement('a')
++    a.href = url
++    a.download = 'devices.csv'
++    a.click()
++    URL.revokeObjectURL(url)
++  }
++
++  if (!devices.length) {
++    return (
++      <div className="empty-state">
++        <Icon name="network" size={36} />
++        <h3>No devices yet</h3>
++        <p>Add your first device to start tracking IP addresses.</p>
++        <button type="button" className="btn primary" onClick={onAdd}><Icon name="plus" size={16} /> Add device</button>
++      </div>
++    )
++  }
++
++  return (
++    <>
++      <div className="toolbar">
++        <label className="search">
++          <Icon name="search" size={16} />
++          <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)}
++            placeholder="Search devices  ( / )" aria-label="Search devices" />
++        </label>
++        <select value={activeType} onChange={(e) => setType(e.target.value)} aria-label="Filter by type">
++          {types.map((t) => <option key={t} value={t}>{t === 'All' ? 'All types' : t}</option>)}
++        </select>
++        <span className="count">{rows.length} of {devices.length}</span>
++        <button type="button" className="btn" onClick={exportCsv} disabled={!rows.length} aria-label="Export CSV">
++          <Icon name="download" size={16} /><span className="btn-text">Export CSV</span>
++        </button>
++      </div>
++
++      {rows.length ? (
++        <div className="scroll">
++          <table>
++            <thead>
++              <tr>
++                {COLUMNS.map(([key, label]) => (
++                  <th key={key} aria-sort={sort.key === key ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none'}>
++                    <button type="button" className="sortbtn" onClick={() => toggleSort(key)}>
++                      {label}{sort.key === key && <Icon name={sort.dir === 1 ? 'up' : 'down'} size={14} />}
++                    </button>
++                  </th>
++                ))}
++                <th><span className="sr">Actions</span></th>
++              </tr>
++            </thead>
++            <tbody>
++              {rows.map((d) => (
++                <tr key={d.id}>
++                  <td data-label="IP address" className="mono">{d.ip}</td>
++                  <td data-label="Name"><b>{d.name}</b></td>
++                  <td data-label="Type">
++                    <span className="typecell"><Icon name={TYPE_ICONS[d.type] || 'other'} size={16} />{d.type}</span>
++                  </td>
++                  <td data-label="Assignment">
++                    <span className={'badge ' + d.status}>{d.status === 'dhcp' ? 'DHCP' : 'Static'}</span>
++                  </td>
++                  <td data-label="Notes">{d.notes || <span className="dim">-</span>}</td>
++                  <td className="rowbtns">
++                    <div className="rowbtn-wrap">
++                      <button type="button" className="iconbtn" onClick={() => onEdit(d)} aria-label={`Edit ${d.name}`} title="Edit">
++                        <Icon name="edit" size={16} />
++                      </button>
++                      <button type="button" className="iconbtn danger" onClick={() => onDelete(d)} aria-label={`Delete ${d.name}`} title="Delete">
++                        <Icon name="trash" size={16} />
++                      </button>
++                    </div>
++                  </td>
++                </tr>
++              ))}
++            </tbody>
++          </table>
++        </div>
++      ) : (
++        <p className="empty">No devices match your search.</p>
++      )}
++    </>
++  )
++}
+diff --git a/client/src/components/DeviceTable.jsx b/client/src/components/DeviceTable.jsx
+deleted file mode 100644
+index 40bd2b4..0000000
+--- a/client/src/components/DeviceTable.jsx
++++ /dev/null
+@@ -1,29 +0,0 @@
+-export default function DeviceTable({ devices, onEdit, onDelete }) {
+-  if (!devices.length) {
+-    return <p className="empty">No devices yet. Add your first device above.</p>
+-  }
+-  return (
+-    <div className="scroll">
+-      <table>
+-        <thead>
+-          <tr><th>IP address</th><th>Name</th><th>Type</th><th>Assignment</th><th>Notes</th><th></th></tr>
+-        </thead>
+-        <tbody>
+-          {devices.map((d) => (
+-            <tr key={d.id}>
+-              <td className="mono">{d.ip}</td>
+-              <td>{d.name}</td>
+-              <td>{d.type}</td>
+-              <td>{d.status === 'dhcp' ? 'DHCP' : 'Static'}</td>
+-              <td>{d.notes}</td>
+-              <td className="rowbtns">
+-                <button type="button" onClick={() => onEdit(d)}>Edit</button>
+-                <button type="button" onClick={() => onDelete(d)}>Delete</button>
+-              </td>
+-            </tr>
+-          ))}
+-        </tbody>
+-      </table>
+-    </div>
+-  )
+-}
+-- 
+2.43.0
+

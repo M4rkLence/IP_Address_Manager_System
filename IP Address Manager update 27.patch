@@ -1,0 +1,202 @@
+From 6df40474c74b46cdc731b0911fb6d2792dfd9d4a Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Mon, 9 Nov 2026 06:37:10 +0000
+Subject: [PATCH] IP Address Manager update 27
+
+---
+ client/src/Dashboard.jsx             | 63 ++++++++++++++++++----------
+ client/src/components/DeviceForm.jsx |  8 ++--
+ client/src/components/Modal.jsx      | 20 +++++++++
+ 3 files changed, 66 insertions(+), 25 deletions(-)
+ create mode 100644 client/src/components/Modal.jsx
+
+diff --git a/client/src/Dashboard.jsx b/client/src/Dashboard.jsx
+index ecc2fe1..d33eb34 100644
+--- a/client/src/Dashboard.jsx
++++ b/client/src/Dashboard.jsx
+@@ -1,6 +1,8 @@
+-import { useEffect, useState } from 'react'
++import { useEffect, useRef, useState } from 'react'
+ import { api } from './api.js'
+ import Header from './components/Header.jsx'
++import Icon from './components/Icon.jsx'
++import Modal from './components/Modal.jsx'
+ import StatCards from './components/StatCards.jsx'
+ import DeviceForm from './components/DeviceForm.jsx'
+ import DeviceTable from './components/DeviceTable.jsx'
+@@ -9,7 +11,7 @@ import SubnetGrid from './components/SubnetGrid.jsx'
+ export default function Dashboard({ user, onLogout, onExpired }) {
+   const [devices, setDevices] = useState([])
+   const [types, setTypes] = useState(['PC'])
+-  const [form, setForm] = useState({ key: 0, initial: {} })
++  const [form, setForm] = useState({ open: false, key: 0, initial: {} })
+   const [formError, setFormError] = useState('')
+   const [suggestion, setSuggestion] = useState('')
+   const [cidrInput, setCidrInput] = useState('192.168.1.0/24')
+@@ -17,6 +19,8 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+   const [subnet, setSubnet] = useState(null)
+   const [subnetError, setSubnetError] = useState('')
+   const [loadError, setLoadError] = useState('')
++  const [toast, setToast] = useState('')
++  const toastTimer = useRef(null)
+ 
+   const loadDevices = () =>
+     api.listDevices().then(setDevices)
+@@ -37,17 +41,26 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+       })
+   }, [cidr, devices])
+ 
+-  const resetForm = (initial = {}) => {
++  const openForm = (initial = {}) => {
+     setFormError(''); setSuggestion('')
+-    setForm((f) => ({ key: f.key + 1, initial }))
++    setForm((f) => ({ open: true, key: f.key + 1, initial }))
++  }
++  const closeForm = () => setForm((f) => ({ ...f, open: false }))
++
++  const notify = (text) => {
++    setToast(text)
++    clearTimeout(toastTimer.current)
++    toastTimer.current = setTimeout(() => setToast(''), 3000)
+   }
+ 
+   async function save(values) {
+     setFormError(''); setSuggestion('')
+     try {
+-      if (form.initial.id) await api.updateDevice(form.initial.id, values)
++      const editing = Boolean(form.initial.id)
++      if (editing) await api.updateDevice(form.initial.id, values)
+       else await api.createDevice(values)
+-      resetForm()
++      closeForm()
++      notify(editing ? 'Device updated' : 'Device added')
+       await loadDevices()
+     } catch (e) {
+       if (e.status === 401) return onExpired()
+@@ -64,7 +77,7 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+       if (e.status === 401) return onExpired()
+       throw e
+     }
+-    if (form.initial.id === d.id) resetForm()
++    notify(`Deleted ${d.name}`)
+     loadDevices()
+   }
+ 
+@@ -77,22 +90,13 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+             <h1>Dashboard</h1>
+             <p className="sub">Keep track of which device uses which address, and spot conflicts before they happen.</p>
+           </div>
++          <button type="button" className="btn primary" onClick={() => openForm()}>
++            <Icon name="plus" size={16} /> Add device
++          </button>
+         </div>
+         {loadError && <p className="error" role="alert">{loadError}</p>}
+ 
+-        <StatCards devices={devices} subnet={subnet} onUse={(ip) => resetForm({ ip })} />
+-
+-        <section className="card">
+-          <DeviceForm
+-            key={form.key}
+-            initial={form.initial}
+-            types={types}
+-            error={formError}
+-            suggestion={suggestion}
+-            onSave={save}
+-            onCancel={() => resetForm()}
+-          />
+-        </section>
++        <StatCards devices={devices} subnet={subnet} onUse={(ip) => openForm({ ip })} />
+ 
+         <section className="card">
+           <div className="card-head">
+@@ -110,16 +114,31 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+                 <span><i className="cell used" /> Used</span>
+                 <span><i className="cell free" /> Free (tap to use)</span>
+               </div>
+-              <SubnetGrid subnet={subnet} onPick={(ip) => resetForm({ ip })} />
++              <SubnetGrid subnet={subnet} onPick={(ip) => openForm({ ip })} />
+             </>
+           )}
+         </section>
+ 
+         <section className="card">
+           <div className="card-head"><h2>All devices</h2></div>
+-          <DeviceTable devices={devices} onEdit={(d) => resetForm(d)} onDelete={remove} />
++          <DeviceTable devices={devices} onEdit={(d) => openForm(d)} onDelete={remove} />
+         </section>
+       </main>
++
++      {form.open && (
++        <Modal onClose={closeForm}>
++          <DeviceForm
++            key={form.key}
++            initial={form.initial}
++            types={types}
++            error={formError}
++            suggestion={suggestion}
++            onSave={save}
++            onCancel={closeForm}
++          />
++        </Modal>
++      )}
++      {toast && <div className="toast" role="status">{toast}</div>}
+     </div>
+   )
+ }
+diff --git a/client/src/components/DeviceForm.jsx b/client/src/components/DeviceForm.jsx
+index 7d5c206..a1bb592 100644
+--- a/client/src/components/DeviceForm.jsx
++++ b/client/src/components/DeviceForm.jsx
+@@ -12,10 +12,12 @@ export default function DeviceForm({ initial, types, error, suggestion, onSave,
+       <h2>{editing ? 'Edit device' : 'Add device'}</h2>
+       <div className="grid2">
+         <label>IP address
+-          <input value={v.ip} onChange={set('ip')} placeholder="192.168.1.10" inputMode="decimal" required />
++          <input value={v.ip} onChange={set('ip')} placeholder="192.168.1.10" inputMode="decimal"
++            autoFocus={!(initial && initial.ip)} required />
+         </label>
+         <label>Device name
+-          <input value={v.name} onChange={set('name')} placeholder="Office printer" required />
++          <input value={v.name} onChange={set('name')} placeholder="Office printer"
++            autoFocus={Boolean(initial && initial.ip)} required />
+         </label>
+         <label>Type
+           <select value={v.type} onChange={set('type')}>
+@@ -46,7 +48,7 @@ export default function DeviceForm({ initial, types, error, suggestion, onSave,
+ 
+       <div className="actions">
+         <button type="submit" className="primary">{editing ? 'Save changes' : 'Add device'}</button>
+-        {(editing || v.ip || v.name) && <button type="button" onClick={onCancel}>Clear</button>}
++        <button type="button" onClick={onCancel}>Cancel</button>
+       </div>
+     </form>
+   )
+diff --git a/client/src/components/Modal.jsx b/client/src/components/Modal.jsx
+new file mode 100644
+index 0000000..0e6e53b
+--- /dev/null
++++ b/client/src/components/Modal.jsx
+@@ -0,0 +1,20 @@
++import { useEffect } from 'react'
++
++// A centred dialog. Esc or a click on the dark backdrop closes it.
++export default function Modal({ onClose, children }) {
++  useEffect(() => {
++    const onKey = (e) => { if (e.key === 'Escape') onClose() }
++    window.addEventListener('keydown', onKey)
++    document.body.style.overflow = 'hidden'
++    return () => {
++      window.removeEventListener('keydown', onKey)
++      document.body.style.overflow = ''
++    }
++  }, [onClose])
++
++  return (
++    <div className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
++      <div className="dialog" role="dialog" aria-modal="true">{children}</div>
++    </div>
++  )
++}
+-- 
+2.43.0
+

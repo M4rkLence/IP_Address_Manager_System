@@ -1,0 +1,155 @@
+From b27fcf023397aced1355e5bf3bc076d5c981b70e Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Mon, 9 Nov 2026 06:37:20 +0000
+Subject: [PATCH] IP Address Manager update 29
+
+---
+ client/src/components/AuthForm.jsx | 117 ++++++++++++++++++++---------
+ 1 file changed, 82 insertions(+), 35 deletions(-)
+
+diff --git a/client/src/components/AuthForm.jsx b/client/src/components/AuthForm.jsx
+index 6b23e4f..5e46555 100644
+--- a/client/src/components/AuthForm.jsx
++++ b/client/src/components/AuthForm.jsx
+@@ -1,13 +1,29 @@
+ import { useState } from 'react'
++import Icon from './Icon.jsx'
++import ThemeToggle from './ThemeToggle.jsx'
++
++const LABELS = ['Too short', 'Weak', 'Okay', 'Good', 'Strong']
++
++// A rough 0-4 score to guide people. The server only enforces the 8 character minimum.
++function strength(pw) {
++  if (pw.length < 8) return 0
++  let s = 1
++  if (pw.length >= 12) s++
++  if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) s++
++  if (/\d/.test(pw) && /[^A-Za-z0-9]/.test(pw)) s++
++  return s
++}
+ 
+ export default function AuthForm({ onSubmit }) {
+   const [mode, setMode] = useState('login')
+   const [username, setUsername] = useState('')
+   const [password, setPassword] = useState('')
+   const [confirm, setConfirm] = useState('')
++  const [show, setShow] = useState(false)
+   const [error, setError] = useState('')
+   const [busy, setBusy] = useState(false)
+   const register = mode === 'register'
++  const score = strength(password)
+ 
+   async function submit(e) {
+     e.preventDefault()
+@@ -30,42 +46,73 @@ export default function AuthForm({ onSubmit }) {
+   }
+ 
+   return (
+-    <main className="authpage">
+-      <h1>IP address manager</h1>
+-      <p className="sub">
+-        {register ? 'Create an account. Your devices and IP list stay private to you.' : 'Log in to see your own IP addresses.'}
+-      </p>
+-      <form className="form" onSubmit={submit}>
+-        <h2>{register ? 'Register' : 'Log in'}</h2>
+-        <label>Username
+-          <input value={username} onChange={(e) => setUsername(e.target.value)}
+-            autoComplete="username" autoCapitalize="none" required />
+-        </label>
+-        <label>Password
+-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+-            autoComplete={register ? 'new-password' : 'current-password'}
+-            minLength={register ? 8 : undefined} required />
+-        </label>
+-        {register && (
+-          <label>Confirm password
+-            <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)}
+-              autoComplete="new-password" required />
++    <div className="authwrap">
++      <aside className="authbrand">
++        <div className="brand big"><span className="logo"><Icon name="network" size={22} /></span>IP Manager</div>
++        <h2>Know every address on your network.</h2>
++        <ul>
++          <li>Spot IP conflicts before they happen</li>
++          <li>See free addresses on a subnet map</li>
++          <li>Your devices stay private to your account</li>
++        </ul>
++      </aside>
++
++      <main className="authpage">
++        <div className="authtop"><ThemeToggle /></div>
++        <h1>{register ? 'Create your account' : 'Welcome back'}</h1>
++        <p className="sub">
++          {register ? 'Your devices and IP list stay private to you.' : 'Log in to see your own IP addresses.'}
++        </p>
++
++        <form className="form" onSubmit={submit} style={{ marginTop: 18 }}>
++          <label>Username
++            <input value={username} onChange={(e) => setUsername(e.target.value)}
++              autoComplete="username" autoCapitalize="none" required />
+           </label>
+-        )}
+-        {register && <p className="hint">Use at least 8 characters.</p>}
+-        {error && <p className="error" role="alert">{error}</p>}
+-        <div className="actions">
+-          <button type="submit" className="primary" disabled={busy}>
+-            {busy ? 'Please wait...' : register ? 'Create account' : 'Log in'}
++
++          <div className="pwfield">
++            <label>Password
++              <input type={show ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)}
++                autoComplete={register ? 'new-password' : 'current-password'}
++                minLength={register ? 8 : undefined} required />
++            </label>
++            <button type="button" className="link pwtoggle" onClick={() => setShow(!show)}>
++              {show ? 'Hide' : 'Show'}
++            </button>
++          </div>
++
++          {register && password && (
++            <>
++              <div className="meter" aria-hidden="true">
++                {[1, 2, 3, 4].map((n) => <i key={n} className={n <= score ? 's' + score : ''} />)}
++              </div>
++              <p className="meterlabel" role="status">Password strength: {LABELS[score]}</p>
++            </>
++          )}
++
++          {register && (
++            <label>Confirm password
++              <input type={show ? 'text' : 'password'} value={confirm} onChange={(e) => setConfirm(e.target.value)}
++                autoComplete="new-password" required />
++            </label>
++          )}
++          {register && !password && <p className="hint">Use at least 8 characters.</p>}
++          {error && <p className="error" role="alert">{error}</p>}
++
++          <div className="actions">
++            <button type="submit" className="primary" disabled={busy}>
++              {busy ? 'Please wait...' : register ? 'Create account' : 'Log in'}
++            </button>
++          </div>
++        </form>
++
++        <p className="switch">
++          {register ? 'Already have an account? ' : 'New here? '}
++          <button type="button" className="link" onClick={switchMode}>
++            {register ? 'Log in' : 'Create an account'}
+           </button>
+-        </div>
+-      </form>
+-      <p className="switch">
+-        {register ? 'Already have an account? ' : 'New here? '}
+-        <button type="button" className="link" onClick={switchMode}>
+-          {register ? 'Log in' : 'Create an account'}
+-        </button>
+-      </p>
+-    </main>
++        </p>
++      </main>
++    </div>
+   )
+ }
+-- 
+2.43.0
+

@@ -1,0 +1,66 @@
+From 5b13aef4bcb177cff6392f4699058ddfeec95dda Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Mon, 9 Nov 2026 06:28:27 +0000
+Subject: [PATCH] IP Address Manager update 24
+
+---
+ README.md | 24 ++++++++++++++++++++++--
+ 1 file changed, 22 insertions(+), 2 deletions(-)
+
+diff --git a/README.md b/README.md
+index 825d677..bf4dc62 100644
+--- a/README.md
++++ b/README.md
+@@ -1,6 +1,7 @@
+ # IP Address Manager (full stack)
+ 
+ Track which device uses which IP address, detect conflicts, and see free addresses on a subnet map.
++Every person registers and logs in, and sees only **their own** devices.
+ 
+ - **Frontend:** React + Vite (`client/`)
+ - **Backend:** Node.js REST API (`server/`), built-in `http` and `node:sqlite`, no npm packages needed
+@@ -22,6 +23,14 @@ Node.js **22.13 or newer** (`node -v` to check). Node 22 prints an "experimental
+ 
+ Open http://localhost:5173.
+ 
++## Accounts
++- **Register** with a username (3-30 letters, numbers, `.` `-` `_`) and a password of at least 8 characters.
++- **Log in** to see your own devices. Two people can use the same IP address in their own lists without clashing.
++- **Log out** with the button at the top right. Logging out ends the session on the server too.
++- Sessions last 7 days.
++
++**Upgrading from the version without accounts:** the old `server/data.db` has no owner for its devices, so the server discards the old device table on first start. If you see any database error, stop the server and delete `server/data.db`, then start again.
++
+ ## Run the tests
+ 
+     cd server
+@@ -31,7 +40,11 @@ Open http://localhost:5173.
+ 
+ | Method | Path | What it does |
+ |---|---|---|
+-| GET | /api/devices | List all devices, sorted by IP |
++| POST | /api/register | Create an account and log in |
++| POST | /api/login | Log in (sets a cookie) |
++| POST | /api/logout | Log out (clears the cookie) |
++| GET | /api/me | Who is logged in (401 if nobody) |
++| GET | /api/devices | List **your** devices, sorted by IP |
+ | POST | /api/devices | Add a device (409 if the IP is taken, with a free suggestion) |
+ | PUT | /api/devices/:id | Update a device |
+ | DELETE | /api/devices/:id | Delete a device |
+@@ -44,5 +57,12 @@ Open http://localhost:5173.
+ 3. If the IP already exists, the API answers 409 and suggests the next free address in that /24.
+ 4. The subnet map asks `/api/subnet` and draws one square per address. Tap a free square to fill the form.
+ 
++## Security notes
++- Passwords are hashed with scrypt and a random salt. The plain password is never stored.
++- The login cookie is `HttpOnly` and `SameSite=Lax`. The database keeps only a hash of the session token.
++- Every device query filters by the logged-in user, so one user cannot read, edit or delete another user's devices.
++- After 10 wrong passwords for one username, login is blocked for 15 minutes.
++- For a real deployment, serve over HTTPS and add the `Secure` flag to the cookie.
++
+ ## Ideas to extend
+-Login with roles (admin/viewer), CSV export, a VLAN field, a ping check for online status.
++Admin role, change password, CSV export, a VLAN field, a ping check for online status.
+-- 
+2.43.0
+

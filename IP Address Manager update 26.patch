@@ -1,0 +1,205 @@
+From a75d0c46e11592ef7f8bb2bf31880fbf98a48e86 Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Mon, 9 Nov 2026 06:36:46 +0000
+Subject: [PATCH] IP Address Manager update 26
+
+---
+ client/src/Dashboard.jsx            | 91 ++++++++++++++++-------------
+ client/src/components/Header.jsx    | 23 ++++++++
+ client/src/components/StatCards.jsx | 42 +++++++++++++
+ 3 files changed, 114 insertions(+), 42 deletions(-)
+ create mode 100644 client/src/components/Header.jsx
+ create mode 100644 client/src/components/StatCards.jsx
+
+diff --git a/client/src/Dashboard.jsx b/client/src/Dashboard.jsx
+index f4aafc2..ecc2fe1 100644
+--- a/client/src/Dashboard.jsx
++++ b/client/src/Dashboard.jsx
+@@ -1,5 +1,7 @@
+ import { useEffect, useState } from 'react'
+ import { api } from './api.js'
++import Header from './components/Header.jsx'
++import StatCards from './components/StatCards.jsx'
+ import DeviceForm from './components/DeviceForm.jsx'
+ import DeviceTable from './components/DeviceTable.jsx'
+ import SubnetGrid from './components/SubnetGrid.jsx'
+@@ -67,52 +69,57 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+   }
+ 
+   return (
+-    <main>
+-      <header className="topbar">
+-        <h1>IP address manager</h1>
+-        <div className="who">
+-          <span>Signed in as <b>{user.username}</b></span>
+-          <button type="button" onClick={onLogout}>Log out</button>
++    <div className="app">
++      <Header user={user} onLogout={onLogout} />
++      <main className="page">
++        <div className="pagehead">
++          <div>
++            <h1>Dashboard</h1>
++            <p className="sub">Keep track of which device uses which address, and spot conflicts before they happen.</p>
++          </div>
+         </div>
+-      </header>
+-      <p className="sub">Keep track of which device uses which address, and spot conflicts before they happen.</p>
+-      {loadError && <p className="error" role="alert">{loadError}</p>}
++        {loadError && <p className="error" role="alert">{loadError}</p>}
++
++        <StatCards devices={devices} subnet={subnet} onUse={(ip) => resetForm({ ip })} />
+ 
+-      <DeviceForm
+-        key={form.key}
+-        initial={form.initial}
+-        types={types}
+-        error={formError}
+-        suggestion={suggestion}
+-        onSave={save}
+-        onCancel={() => resetForm()}
+-      />
++        <section className="card">
++          <DeviceForm
++            key={form.key}
++            initial={form.initial}
++            types={types}
++            error={formError}
++            suggestion={suggestion}
++            onSave={save}
++            onCancel={() => resetForm()}
++          />
++        </section>
+ 
+-      <h2>Subnet map</h2>
+-      <form className="subnetbar" onSubmit={(e) => { e.preventDefault(); setCidr(cidrInput.trim()) }}>
+-        <input value={cidrInput} onChange={(e) => setCidrInput(e.target.value)}
+-          aria-label="Subnet in CIDR form" className="mono" />
+-        <button type="submit">Show subnet</button>
+-      </form>
+-      {subnetError && <p className="error" role="alert">{subnetError}</p>}
+-      {subnet && (
+-        <>
+-          <p className="stats">
+-            <b>{subnet.usedCount}</b> of <b>{subnet.usable}</b> addresses used.
+-            {subnet.nextFree
+-              ? <> Next free: <button type="button" className="link mono" onClick={() => resetForm({ ip: subnet.nextFree })}>{subnet.nextFree}</button></>
+-              : ' No free addresses left.'}
+-          </p>
+-          <div className="legend">
+-            <span><i className="cell used" /> Used</span>
+-            <span><i className="cell free" /> Free (tap to use)</span>
++        <section className="card">
++          <div className="card-head">
++            <h2>Subnet map</h2>
++            <form className="subnetbar" onSubmit={(e) => { e.preventDefault(); setCidr(cidrInput.trim()) }}>
++              <input value={cidrInput} onChange={(e) => setCidrInput(e.target.value)}
++                aria-label="Subnet in CIDR form" className="mono" />
++              <button type="submit">Show subnet</button>
++            </form>
+           </div>
+-          <SubnetGrid subnet={subnet} onPick={(ip) => resetForm({ ip })} />
+-        </>
+-      )}
++          {subnetError && <p className="error" role="alert">{subnetError}</p>}
++          {subnet && (
++            <>
++              <div className="legend">
++                <span><i className="cell used" /> Used</span>
++                <span><i className="cell free" /> Free (tap to use)</span>
++              </div>
++              <SubnetGrid subnet={subnet} onPick={(ip) => resetForm({ ip })} />
++            </>
++          )}
++        </section>
+ 
+-      <h2>All devices</h2>
+-      <DeviceTable devices={devices} onEdit={(d) => resetForm(d)} onDelete={remove} />
+-    </main>
++        <section className="card">
++          <div className="card-head"><h2>All devices</h2></div>
++          <DeviceTable devices={devices} onEdit={(d) => resetForm(d)} onDelete={remove} />
++        </section>
++      </main>
++    </div>
+   )
+ }
+diff --git a/client/src/components/Header.jsx b/client/src/components/Header.jsx
+new file mode 100644
+index 0000000..332c886
+--- /dev/null
++++ b/client/src/components/Header.jsx
+@@ -0,0 +1,23 @@
++import Icon from './Icon.jsx'
++import ThemeToggle from './ThemeToggle.jsx'
++
++export default function Header({ user, onLogout }) {
++  return (
++    <header className="header">
++      <div className="brand">
++        <span className="logo"><Icon name="network" size={20} /></span>
++        <span>IP Manager</span>
++      </div>
++      <div className="header-right">
++        <ThemeToggle />
++        <div className="userchip" title={user.username}>
++          <span className="avatar">{user.username[0].toUpperCase()}</span>
++          <span className="uname">{user.username}</span>
++        </div>
++        <button type="button" className="btn" onClick={onLogout} aria-label="Log out">
++          <Icon name="logout" size={16} /><span className="btn-text">Log out</span>
++        </button>
++      </div>
++    </header>
++  )
++}
+diff --git a/client/src/components/StatCards.jsx b/client/src/components/StatCards.jsx
+new file mode 100644
+index 0000000..9d85862
+--- /dev/null
++++ b/client/src/components/StatCards.jsx
+@@ -0,0 +1,42 @@
++export default function StatCards({ devices, subnet, onUse }) {
++  const staticCount = devices.filter((d) => d.status === 'static').length
++  const dhcpCount = devices.length - staticCount
++  const pct = subnet ? Math.round((subnet.usedCount / subnet.usable) * 100) : 0
++  const level = pct >= 90 ? 'hot' : pct >= 70 ? 'warm' : ''
++
++  return (
++    <section className="summary" aria-label="Summary">
++      <div className="stat">
++        <div className="stat-label">Devices</div>
++        <div className="stat-value">{devices.length}</div>
++        <div className="stat-sub">all of your devices</div>
++      </div>
++
++      <div className="stat">
++        <div className="stat-label">Subnet usage</div>
++        <div className="stat-value">{subnet ? pct + '%' : '-'}</div>
++        <div className={'bar ' + level} role="progressbar" aria-label="Subnet usage"
++          aria-valuenow={pct} aria-valuemin="0" aria-valuemax="100">
++          <i style={{ width: pct + '%' }} />
++        </div>
++        <div className="stat-sub">
++          {subnet ? `${subnet.usedCount} of ${subnet.usable} used in ${subnet.cidr}` : 'Pick a subnet below'}
++        </div>
++      </div>
++
++      <div className="stat">
++        <div className="stat-label">Static / DHCP</div>
++        <div className="stat-value">{staticCount} <span className="slash">/</span> {dhcpCount}</div>
++        <div className="stat-sub">fixed vs automatic</div>
++      </div>
++
++      <div className="stat">
++        <div className="stat-label">Next free address</div>
++        {subnet && subnet.nextFree
++          ? <button type="button" className="stat-link mono" onClick={() => onUse(subnet.nextFree)}>{subnet.nextFree}</button>
++          : <div className="stat-value">-</div>}
++        <div className="stat-sub">tap it to assign</div>
++      </div>
++    </section>
++  )
++}
+-- 
+2.43.0
+

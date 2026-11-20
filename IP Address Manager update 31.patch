@@ -1,0 +1,24 @@
+From e767fd2a0c1f4d7624ed6710e36e162f7b63fb55 Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Wed, 18 Nov 2026 05:10:27 +0000
+Subject: [PATCH] IP Address Manager update 31
+
+---
+ server/db.js | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/server/db.js b/server/db.js
+index 0ec2817..5221d99 100644
+--- a/server/db.js
++++ b/server/db.js
+@@ -72,6 +72,7 @@ export const STATUSES = ['static', 'dhcp']
+ const toDevice = (r) => ({
+   id: Number(r.id), ip: formatIp(r.ip), ipNum: r.ip,
+   name: r.name, type: r.type, status: r.status, notes: r.notes,
++  createdAt: r.created_at, // UTC, like "2026-11-12 08:30:00"
+ })
+ 
+ // Every query below filters by user_id, so people only ever see their own devices.
+-- 
+2.43.0
+

@@ -1,0 +1,36 @@
+From 2894b961101e0d8dd206e5e35336837022e20d8d Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Wed, 18 Nov 2026 11:39:37 +0000
+Subject: [PATCH] IP Address Manager update 38
+
+---
+ client/src/styles.css | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/client/src/styles.css b/client/src/styles.css
+index df711a7..f529ff2 100644
+--- a/client/src/styles.css
++++ b/client/src/styles.css
+@@ -272,3 +272,19 @@ tbody tr:hover { background: color-mix(in srgb, var(--brand) 6%, transparent); }
+ .typeico { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 9px; color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent); }
+ .qa { display: grid; gap: 10px; }
+ .qa .btn { justify-content: flex-start; width: 100%; }
++
++/* ---------- phones: table becomes cards ---------- */
++@media (max-width: 680px) {
++  .card { padding: 16px; }
++  .topbar-right { width: 100%; justify-content: flex-end; }
++  .subnetbar { width: 100%; }
++  .subnetbar input { width: 100%; flex: 1; }
++  table, tbody, tr, td { display: block; }
++  thead { position: absolute; width: 1px; height: 1px; overflow: hidden; }
++  tr { padding: 10px 14px; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface2); }
++  td { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 0; border: 0; text-align: right; }
++  td::before { content: attr(data-label); color: var(--mute); font-size: .78rem; font-weight: 600; text-align: left; }
++  td.rowbtns::before { content: none; }
++  td.rowbtns { justify-content: flex-end; }
++  .stat-big b { font-size: 2.2rem; }
++}
+-- 
+2.43.0
+

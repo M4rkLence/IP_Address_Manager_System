@@ -1,0 +1,209 @@
+From 7dee9b6b21710b8f93ed79354c430942234572ac Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Wed, 18 Nov 2026 05:13:53 +0000
+Subject: [PATCH] IP Address Manager update 36
+
+---
+ client/src/Dashboard.jsx                   | 13 +++-
+ client/src/components/charts/LineChart.jsx | 90 ++++++++++++++++++++++
+ client/src/lib/stats.js                    | 26 +++++++
+ client/src/styles.css                      | 15 ++++
+ 4 files changed, 143 insertions(+), 1 deletion(-)
+ create mode 100644 client/src/components/charts/LineChart.jsx
+
+diff --git a/client/src/Dashboard.jsx b/client/src/Dashboard.jsx
+index 0ffa3d9..f8646e4 100644
+--- a/client/src/Dashboard.jsx
++++ b/client/src/Dashboard.jsx
+@@ -3,9 +3,10 @@ import { api } from './api.js'
+ import Sidebar from './components/Sidebar.jsx'
+ import Topbar from './components/Topbar.jsx'
+ import { downloadCsv } from './lib/csv.js'
+-import { countBy, blockUsage, typeColor } from './lib/stats.js'
++import { countBy, blockUsage, typeColor, growthSeries } from './lib/stats.js'
+ import DonutChart from './components/charts/DonutChart.jsx'
+ import BarChart from './components/charts/BarChart.jsx'
++import LineChart from './components/charts/LineChart.jsx'
+ import Icon from './components/Icon.jsx'
+ import Modal from './components/Modal.jsx'
+ import StatCards from './components/StatCards.jsx'
+@@ -97,6 +98,7 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+     { label: 'DHCP', value: devices.length - staticCount, color: 'var(--pink)' },
+   ]
+   const blocks = useMemo(() => blockUsage(subnet, devices), [subnet, devices])
++  const growth = useMemo(() => growthSeries(devices), [devices])
+ 
+   const goTo = (id) => {
+     setActive(id)
+@@ -118,6 +120,15 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+ 
+         <div className="dash-cols">
+           <div className="dash-left">
++            <section className="card">
++              <div className="card-head"><h2>Devices over time</h2><span className="dim small">last 14 days</span></div>
++              {devices.length === 0 ? <p className="empty">Add a device to see how your network grows.</p> : (
++                <LineChart dates={growth.dates} title="Devices over time" series={[
++                  { key: 'static', name: 'Static', color: '#22d3c5', values: growth.static },
++                  { key: 'dhcp', name: 'DHCP', color: '#ff5ec7', values: growth.dhcp, dashed: true },
++                ]} />
++              )}
++            </section>
+             <div className="dash-pair">
+               <section className="card">
+                 <div className="card-head"><h2>Devices by type</h2></div>
+diff --git a/client/src/components/charts/LineChart.jsx b/client/src/components/charts/LineChart.jsx
+new file mode 100644
+index 0000000..512b874
+--- /dev/null
++++ b/client/src/components/charts/LineChart.jsx
+@@ -0,0 +1,90 @@
++import { useState } from 'react'
++
++const W = 640, H = 236
++const PAD = { l: 34, r: 14, t: 14, b: 28 }
++
++// Turns points into a smooth curve (Catmull-Rom converted to Bezier segments).
++function smooth(pts, top, bottom) {
++  const cl = (v) => Math.max(top, Math.min(bottom, v))
++  let d = `M${pts[0][0]},${pts[0][1]}`
++  for (let i = 0; i < pts.length - 1; i++) {
++    const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2
++    d += ` C${p1[0] + (p2[0] - p0[0]) / 6},${cl(p1[1] + (p2[1] - p0[1]) / 6)} ${p2[0] - (p3[0] - p1[0]) / 6},${cl(p2[1] - (p3[1] - p1[1]) / 6)} ${p2[0]},${p2[1]}`
++  }
++  return d
++}
++
++const fmt = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
++
++// dates: Date[]  series: [{ key, name, color, values, dashed }]
++export default function LineChart({ dates, series, title }) {
++  const [hover, setHover] = useState(null)
++  const n = dates.length
++  const top = Math.max(4, ...series.flatMap((s) => s.values))
++  const max = Math.ceil(top / 4) * 4
++  const x = (i) => PAD.l + (i / (n - 1)) * (W - PAD.l - PAD.r)
++  const y = (v) => PAD.t + (1 - v / max) * (H - PAD.t - PAD.b)
++  const ticks = [0, 1, 2, 3, 4].map((i) => (max / 4) * i)
++
++  function onMove(e) {
++    const r = e.currentTarget.getBoundingClientRect()
++    const px = ((e.clientX - r.left) / r.width) * W
++    const i = Math.round(((px - PAD.l) / (W - PAD.l - PAD.r)) * (n - 1))
++    setHover(Math.max(0, Math.min(n - 1, i)))
++  }
++
++  return (
++    <div className="linechart">
++      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={title} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
++        <defs>
++          {series.map((s) => (
++            <linearGradient key={s.key} id={'lg-' + s.key} x1="0" x2="0" y1="0" y2="1">
++              <stop offset="0%" stopColor={s.color} stopOpacity=".32" />
++              <stop offset="100%" stopColor={s.color} stopOpacity="0" />
++            </linearGradient>
++          ))}
++        </defs>
++
++        {ticks.map((t) => (
++          <g key={t}>
++            <line x1={PAD.l} x2={W - PAD.r} y1={y(t)} y2={y(t)} className="lc-grid" />
++            <text x={PAD.l - 8} y={y(t) + 3} textAnchor="end" className="lc-tick">{Math.round(t)}</text>
++          </g>
++        ))}
++        {dates.map((d, i) => (i % 2 === 0 ? <line key={i} x1={x(i)} x2={x(i)} y1={PAD.t} y2={H - PAD.b} className="lc-grid faint" /> : null))}
++        {dates.map((d, i) => (i % 3 === 0 || i === n - 1 ? (
++          <text key={i} x={x(i)} y={H - 8} textAnchor="middle" className="lc-tick">{fmt(d)}</text>
++        ) : null))}
++
++        {series.map((s) => {
++          const pts = s.values.map((v, i) => [x(i), y(v)])
++          const line = smooth(pts, PAD.t, H - PAD.b)
++          return (
++            <g key={s.key}>
++              <path d={`${line} L${x(n - 1)},${y(0)} L${x(0)},${y(0)} Z`} fill={`url(#lg-${s.key})`} />
++              <path d={line} fill="none" strokeWidth="2.6" strokeLinecap="round" strokeDasharray={s.dashed ? '1 6' : undefined} style={{ stroke: s.color }} />
++            </g>
++          )
++        })}
++
++        {hover !== null && (
++          <g>
++            <line x1={x(hover)} x2={x(hover)} y1={PAD.t} y2={H - PAD.b} className="lc-cursor" />
++            {series.map((s) => <circle key={s.key} cx={x(hover)} cy={y(s.values[hover])} r="5" className="lc-dot" style={{ stroke: s.color }} />)}
++          </g>
++        )}
++      </svg>
++
++      {hover !== null && (
++        <div className="tip" style={{ left: Math.min(88, Math.max(12, (x(hover) / W) * 100)) + '%' }} role="status">
++          <b>{fmt(dates[hover])}</b>
++          {series.map((s) => <span key={s.key}>{s.name}: {s.values[hover]}</span>)}
++        </div>
++      )}
++
++      <div className="lc-legend">
++        {series.map((s) => <span key={s.key}><i style={{ borderTopColor: s.color, borderTopStyle: s.dashed ? 'dotted' : 'solid' }} />{s.name}</span>)}
++      </div>
++    </div>
++  )
++}
+diff --git a/client/src/lib/stats.js b/client/src/lib/stats.js
+index 4eec278..136493f 100644
+--- a/client/src/lib/stats.js
++++ b/client/src/lib/stats.js
+@@ -26,3 +26,29 @@ export function blockUsage(subnet, devices, blocks = 8) {
+   }
+   return out
+ }
++
++const utc = (s) => new Date(s.replace(' ', 'T') + 'Z') // the server stores UTC
++const dayKey = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
++
++// Running totals of static and DHCP devices for each of the last `days` days.
++export function growthSeries(devices, days = 14) {
++  const today = new Date()
++  today.setHours(0, 0, 0, 0)
++  const dates = Array.from({ length: days }, (_, i) => {
++    const d = new Date(today)
++    d.setDate(d.getDate() - (days - 1 - i))
++    return d
++  })
++  const keys = dates.map(dayKey)
++  const added = { static: Array(days).fill(0), dhcp: Array(days).fill(0) }
++  const before = { static: 0, dhcp: 0 }
++  for (const dev of devices) {
++    const created = dev.createdAt ? utc(dev.createdAt) : today
++    const idx = keys.indexOf(dayKey(created))
++    if (idx >= 0) added[dev.status][idx]++
++    else if (created < dates[0]) before[dev.status]++
++    else added[dev.status][days - 1]++
++  }
++  const running = (arr, base) => arr.map((_, i) => base + arr.slice(0, i + 1).reduce((a, b) => a + b, 0))
++  return { dates, static: running(added.static, before.static), dhcp: running(added.dhcp, before.dhcp) }
++}
+diff --git a/client/src/styles.css b/client/src/styles.css
+index 01d1314..e44ee1b 100644
+--- a/client/src/styles.css
++++ b/client/src/styles.css
+@@ -243,3 +243,18 @@ tbody tr:hover { background: color-mix(in srgb, var(--brand) 6%, transparent); }
+ .bcol small { height: 26px; line-height: 26px; font-size: .7rem; color: var(--mute); }
+ @media (max-width: 1100px) { .dash-cols { grid-template-columns: minmax(0, 1fr); } }
+ @media (max-width: 700px) { .dash-pair { grid-template-columns: minmax(0, 1fr); } }
++
++/* ---------- line chart ---------- */
++.small { font-size: .8rem; }
++.linechart { position: relative; }
++.linechart svg { display: block; width: 100%; height: auto; }
++.lc-grid { stroke: var(--line); stroke-width: 1; }
++.lc-grid.faint { stroke-dasharray: 2 5; opacity: .6; }
++.lc-tick { font-size: 10px; fill: var(--mute); }
++.lc-cursor { stroke: var(--line2); stroke-width: 1; }
++.lc-dot { fill: var(--surface); stroke-width: 3; }
++.tip { position: absolute; top: 6px; transform: translateX(-50%); display: grid; gap: 1px; padding: 7px 12px; border-radius: 12px; pointer-events: none;
++  white-space: nowrap; font-size: .74rem; color: #fff; background: var(--grad-purple); box-shadow: 0 10px 24px rgba(0, 0, 0, .4); }
++.tip b { font-size: .78rem; }
++.lc-legend { display: flex; gap: 20px; margin-top: 8px; font-size: .8rem; color: var(--mute); }
++.lc-legend i { display: inline-block; width: 22px; border-top: 3px solid; vertical-align: middle; margin-right: 8px; }
+-- 
+2.43.0
+

@@ -1,0 +1,272 @@
+From 2d1c930d65fea233c3b08720860a1efcfd257c47 Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Wed, 18 Nov 2026 11:39:37 +0000
+Subject: [PATCH] IP Address Manager update 37
+
+---
+ client/src/Dashboard.jsx             | 26 ++++++++++++-
+ client/src/components/DeviceList.jsx | 58 ++++++++++------------------
+ client/src/components/Sidebar.jsx    | 28 +++++++++++++-
+ client/src/styles.css                | 14 +++++++
+ 4 files changed, 85 insertions(+), 41 deletions(-)
+
+diff --git a/client/src/Dashboard.jsx b/client/src/Dashboard.jsx
+index f8646e4..e92ae01 100644
+--- a/client/src/Dashboard.jsx
++++ b/client/src/Dashboard.jsx
+@@ -28,6 +28,8 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+   const [toast, setToast] = useState('')
+   const [active, setActive] = useState('overview')
+   const [menuOpen, setMenuOpen] = useState(false)
++  const [typeFilter, setTypeFilter] = useState('All')
++  const [statusFilter, setStatusFilter] = useState('All')
+   const toastTimer = useRef(null)
+ 
+   const loadDevices = () =>
+@@ -107,9 +109,18 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+   }
+ 
++  // sidebar filter buttons: apply the filter, then jump to the device list
++  const filterBy = (kind, value) => {
++    if (kind === 'type') setTypeFilter(value)
++    else setStatusFilter(value)
++    goTo('devices')
++  }
++  const clearFilter = (kind) => (kind === 'type' ? setTypeFilter('All') : setStatusFilter('All'))
++
+   return (
+     <div className="shell">
+-      <Sidebar user={user} deviceCount={devices.length} active={active} onNav={goTo}
++      <Sidebar user={user} devices={devices} types={types} typeFilter={typeFilter} statusFilter={statusFilter}
++        onType={(t) => filterBy('type', t)} onStatus={(s) => filterBy('status', s)} active={active} onNav={goTo}
+         onDownload={() => downloadCsv(devices, 'ip-device-report.csv')} open={menuOpen} onClose={() => setMenuOpen(false)} />
+ 
+       <main className="main" id="overview">
+@@ -145,6 +156,16 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+               <div className="card-head"><h2>Address usage by block</h2></div>
+               <BarChart data={blocks} title="Used addresses per block of the subnet" />
+             </section>
++            <section className="card">
++              <div className="card-head"><h2>Quick actions</h2></div>
++              <div className="qa">
++                <button type="button" className="btn primary" onClick={() => openForm()}><Icon name="plus" size={16} /> Add device</button>
++                <button type="button" className="btn cyan" disabled={!subnet || !subnet.nextFree}
++                  onClick={() => subnet && subnet.nextFree && openForm({ ip: subnet.nextFree })}><Icon name="zap" size={16} /> Use next free IP</button>
++                <button type="button" className="btn" onClick={() => goTo('subnet')}><Icon name="map" size={16} /> View subnet map</button>
++                <button type="button" className="btn" onClick={() => downloadCsv(devices, 'ip-device-report.csv')}><Icon name="download" size={16} /> Export all devices</button>
++              </div>
++            </section>
+           </div>
+         </div>
+ 
+@@ -171,7 +192,8 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+ 
+         <section className="card" id="devices">
+           <div className="card-head"><h2>All devices</h2></div>
+-          <DeviceList devices={devices} onAdd={() => openForm()} onEdit={(d) => openForm(d)} onDelete={remove} />
++          <DeviceList devices={devices} typeFilter={typeFilter} statusFilter={statusFilter} onClearFilter={clearFilter}
++            onAdd={() => openForm()} onEdit={(d) => openForm(d)} onDelete={remove} />
+         </section>
+       </main>
+ 
+diff --git a/client/src/components/DeviceList.jsx b/client/src/components/DeviceList.jsx
+index 638fb99..d9aa375 100644
+--- a/client/src/components/DeviceList.jsx
++++ b/client/src/components/DeviceList.jsx
+@@ -1,18 +1,13 @@
+ import { useEffect, useMemo, useRef, useState } from 'react'
+ import Icon from './Icon.jsx'
++import { downloadCsv } from '../lib/csv.js'
++import { typeColor } from '../lib/stats.js'
+ 
+ const TYPE_ICONS = { Router: 'router', Switch: 'switch', Server: 'server', PC: 'pc', Printer: 'printer', Phone: 'phone', Other: 'other' }
+ const COLUMNS = [['ipNum', 'IP address'], ['name', 'Name'], ['type', 'Type'], ['status', 'Assignment'], ['notes', 'Notes']]
+ 
+-function toCsv(rows) {
+-  const q = (v) => `"${String(v).replace(/"/g, '""')}"`
+-  const lines = rows.map((d) => [d.ip, d.name, d.type, d.status, d.notes].map(q).join(','))
+-  return ['IP address,Name,Type,Assignment,Notes', ...lines].join('\n')
+-}
+-
+-export default function DeviceList({ devices, onAdd, onEdit, onDelete }) {
++export default function DeviceList({ devices, typeFilter, statusFilter, onClearFilter, onAdd, onEdit, onDelete }) {
+   const [query, setQuery] = useState('')
+-  const [type, setType] = useState('All')
+   const [sort, setSort] = useState({ key: 'ipNum', dir: 1 })
+   const searchRef = useRef(null)
+ 
+@@ -28,31 +23,19 @@ export default function DeviceList({ devices, onAdd, onEdit, onDelete }) {
+     return () => window.removeEventListener('keydown', onKey)
+   }, [])
+ 
+-  const types = useMemo(() => ['All', ...new Set(devices.map((d) => d.type))], [devices])
+-  const activeType = types.includes(type) ? type : 'All'
+-
+   const rows = useMemo(() => {
+     const q = query.trim().toLowerCase()
+     return devices
+-      .filter((d) => (activeType === 'All' || d.type === activeType) &&
++      .filter((d) => (typeFilter === 'All' || d.type === typeFilter) && (statusFilter === 'All' || d.status === statusFilter) &&
+         (!q || [d.ip, d.name, d.type, d.status, d.notes].some((v) => String(v).toLowerCase().includes(q))))
+       .sort((a, b) => {
+         const x = a[sort.key], y = b[sort.key]
+         return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y))) * sort.dir
+       })
+-  }, [devices, query, activeType, sort])
++  }, [devices, query, typeFilter, statusFilter, sort])
+ 
+   const toggleSort = (key) => setSort((s) => ({ key, dir: s.key === key ? -s.dir : 1 }))
+ 
+-  function exportCsv() {
+-    const url = URL.createObjectURL(new Blob([toCsv(rows)], { type: 'text/csv' }))
+-    const a = document.createElement('a')
+-    a.href = url
+-    a.download = 'devices.csv'
+-    a.click()
+-    URL.revokeObjectURL(url)
+-  }
+-
+   if (!devices.length) {
+     return (
+       <div className="empty-state">
+@@ -72,11 +55,18 @@ export default function DeviceList({ devices, onAdd, onEdit, onDelete }) {
+           <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)}
+             placeholder="Search devices  ( / )" aria-label="Search devices" />
+         </label>
+-        <select value={activeType} onChange={(e) => setType(e.target.value)} aria-label="Filter by type">
+-          {types.map((t) => <option key={t} value={t}>{t === 'All' ? 'All types' : t}</option>)}
+-        </select>
++        {typeFilter !== 'All' && (
++          <button type="button" className="fchip" onClick={() => onClearFilter('type')} aria-label={`Remove type filter ${typeFilter}`}>
++            Type: {typeFilter} <Icon name="x" size={14} />
++          </button>
++        )}
++        {statusFilter !== 'All' && (
++          <button type="button" className="fchip" onClick={() => onClearFilter('status')} aria-label={`Remove assignment filter ${statusFilter}`}>
++            Assignment: {statusFilter === 'dhcp' ? 'DHCP' : 'Static'} <Icon name="x" size={14} />
++          </button>
++        )}
+         <span className="count">{rows.length} of {devices.length}</span>
+-        <button type="button" className="btn" onClick={exportCsv} disabled={!rows.length} aria-label="Export CSV">
++        <button type="button" className="btn" onClick={() => downloadCsv(rows, 'devices.csv')} disabled={!rows.length} aria-label="Export CSV">
+           <Icon name="download" size={16} /><span className="btn-text">Export CSV</span>
+         </button>
+       </div>
+@@ -102,20 +92,14 @@ export default function DeviceList({ devices, onAdd, onEdit, onDelete }) {
+                   <td data-label="IP address" className="mono">{d.ip}</td>
+                   <td data-label="Name"><b>{d.name}</b></td>
+                   <td data-label="Type">
+-                    <span className="typecell"><Icon name={TYPE_ICONS[d.type] || 'other'} size={16} />{d.type}</span>
+-                  </td>
+-                  <td data-label="Assignment">
+-                    <span className={'badge ' + d.status}>{d.status === 'dhcp' ? 'DHCP' : 'Static'}</span>
++                    <span className="typecell"><span className="typeico" style={{ '--c': typeColor(d.type) }}><Icon name={TYPE_ICONS[d.type] || 'other'} size={15} /></span>{d.type}</span>
+                   </td>
++                  <td data-label="Assignment"><span className={'badge ' + d.status}>{d.status === 'dhcp' ? 'DHCP' : 'Static'}</span></td>
+                   <td data-label="Notes">{d.notes || <span className="dim">-</span>}</td>
+                   <td className="rowbtns">
+                     <div className="rowbtn-wrap">
+-                      <button type="button" className="iconbtn" onClick={() => onEdit(d)} aria-label={`Edit ${d.name}`} title="Edit">
+-                        <Icon name="edit" size={16} />
+-                      </button>
+-                      <button type="button" className="iconbtn danger" onClick={() => onDelete(d)} aria-label={`Delete ${d.name}`} title="Delete">
+-                        <Icon name="trash" size={16} />
+-                      </button>
++                      <button type="button" className="iconbtn" onClick={() => onEdit(d)} aria-label={`Edit ${d.name}`} title="Edit"><Icon name="edit" size={16} /></button>
++                      <button type="button" className="iconbtn danger" onClick={() => onDelete(d)} aria-label={`Delete ${d.name}`} title="Delete"><Icon name="trash" size={16} /></button>
+                     </div>
+                   </td>
+                 </tr>
+@@ -124,7 +108,7 @@ export default function DeviceList({ devices, onAdd, onEdit, onDelete }) {
+           </table>
+         </div>
+       ) : (
+-        <p className="empty">No devices match your search.</p>
++        <p className="empty">No devices match your filters.</p>
+       )}
+     </>
+   )
+diff --git a/client/src/components/Sidebar.jsx b/client/src/components/Sidebar.jsx
+index 5f4003f..ebc0b06 100644
+--- a/client/src/components/Sidebar.jsx
++++ b/client/src/components/Sidebar.jsx
+@@ -1,12 +1,25 @@
+ import Icon from './Icon.jsx'
++import { countBy, typeColor } from '../lib/stats.js'
+ 
+ function Section({ icon, title }) {
+   return <div className="sb-section"><Icon name={icon} size={16} /><span>{title}</span></div>
+ }
+ 
++function Filter({ label, count, on, dot, tone, onClick }) {
++  return (
++    <button type="button" className={'sb-item' + (on ? ' on' : '')} aria-pressed={on} onClick={onClick}>
++      <span className="sb-label">{dot && <i className="sb-dot" style={{ background: dot }} />}{label}</span>
++      <span className={'sb-count' + (tone ? ' ' + tone : '')}>{count}</span>
++    </button>
++  )
++}
++
+ const NAV = [['overview', 'Dashboard'], ['subnet', 'Subnet map'], ['devices', 'Devices']]
+ 
+-export default function Sidebar({ user, deviceCount, active, onNav, onDownload, open, onClose }) {
++export default function Sidebar({ user, devices, types, typeFilter, statusFilter, onType, onStatus, active, onNav, onDownload, open, onClose }) {
++  const byType = countBy(devices, 'type')
++  const staticCount = devices.filter((d) => d.status === 'static').length
++
+   return (
+     <>
+       {open && <div className="sb-overlay" onClick={onClose} />}
+@@ -16,7 +29,7 @@ export default function Sidebar({ user, deviceCount, active, onNav, onDownload,
+         <Section icon="user" title="Profile" />
+         <div className="sb-profile">
+           <span className="avatar">{user.username[0].toUpperCase()}</span>
+-          <div><b>{user.username}</b><span>{deviceCount} {deviceCount === 1 ? 'device' : 'devices'}</span></div>
++          <div><b>{user.username}</b><span>{devices.length} {devices.length === 1 ? 'device' : 'devices'}</span></div>
+         </div>
+ 
+         <Section icon="chart" title="Overview" />
+@@ -25,6 +38,17 @@ export default function Sidebar({ user, deviceCount, active, onNav, onDownload,
+             aria-current={active === id ? 'page' : undefined} onClick={() => onNav(id)}>{label}</button>
+         ))}
+ 
++        <Section icon="layers" title="Device types" />
++        <Filter label="All types" count={devices.length} on={typeFilter === 'All'} onClick={() => onType('All')} />
++        {types.map((t) => (
++          <Filter key={t} label={t} count={byType[t] || 0} dot={typeColor(t)} on={typeFilter === t} onClick={() => onType(t)} />
++        ))}
++
++        <Section icon="tag" title="Assignment" />
++        <Filter label="All" count={devices.length} on={statusFilter === 'All'} onClick={() => onStatus('All')} />
++        <Filter label="Static" count={staticCount} tone="cyanc" on={statusFilter === 'static'} onClick={() => onStatus('static')} />
++        <Filter label="DHCP" count={devices.length - staticCount} tone="pinkc" on={statusFilter === 'dhcp'} onClick={() => onStatus('dhcp')} />
++
+         <div className="sb-report">
+           <div className="sb-row"><b>Full device report</b><span className="pill">CSV</span></div>
+           <span className="sb-muted">Download report</span>
+diff --git a/client/src/styles.css b/client/src/styles.css
+index e44ee1b..df711a7 100644
+--- a/client/src/styles.css
++++ b/client/src/styles.css
+@@ -258,3 +258,17 @@ tbody tr:hover { background: color-mix(in srgb, var(--brand) 6%, transparent); }
+ .tip b { font-size: .78rem; }
+ .lc-legend { display: flex; gap: 20px; margin-top: 8px; font-size: .8rem; color: var(--mute); }
+ .lc-legend i { display: inline-block; width: 22px; border-top: 3px solid; vertical-align: middle; margin-right: 8px; }
++
++/* ---------- sidebar filters, filter chips, quick actions ---------- */
++.sb-label { display: inline-flex; align-items: center; gap: 10px; }
++.sb-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
++.sb-count { min-width: 24px; padding: 1px 8px; border-radius: 99px; text-align: center; font-size: .72rem; font-weight: 700; background: var(--surface2); color: var(--mute); }
++.sb-count.cyanc { background: color-mix(in srgb, var(--cyan) 18%, transparent); color: var(--cyan); }
++.sb-count.pinkc { background: color-mix(in srgb, var(--pink) 18%, transparent); color: var(--pink); }
++.sb-item.on .sb-count { background: rgba(255, 255, 255, .18); color: #fff; }
++.fchip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 99px; font-size: .8rem; font-weight: 600; cursor: pointer;
++  background: var(--brand-soft); color: var(--brand); border: 1px solid color-mix(in srgb, var(--brand) 40%, transparent); }
++.fchip:hover { filter: brightness(1.15); }
++.typeico { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 9px; color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent); }
++.qa { display: grid; gap: 10px; }
++.qa .btn { justify-content: flex-start; width: 100%; }
+-- 
+2.43.0
+

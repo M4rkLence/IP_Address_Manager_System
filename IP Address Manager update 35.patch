@@ -1,0 +1,220 @@
+From ee75e4e2e03e428b1582f279d511d938a74811cc Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Wed, 18 Nov 2026 05:13:53 +0000
+Subject: [PATCH] IP Address Manager update 35
+
+---
+ client/src/Dashboard.jsx                    | 36 ++++++++++++++++++++-
+ client/src/components/charts/BarChart.jsx   | 24 ++++++++++++++
+ client/src/components/charts/DonutChart.jsx | 36 +++++++++++++++++++++
+ client/src/lib/stats.js                     | 28 ++++++++++++++++
+ client/src/styles.css                       | 25 ++++++++++++++
+ 5 files changed, 148 insertions(+), 1 deletion(-)
+ create mode 100644 client/src/components/charts/BarChart.jsx
+ create mode 100644 client/src/components/charts/DonutChart.jsx
+ create mode 100644 client/src/lib/stats.js
+
+diff --git a/client/src/Dashboard.jsx b/client/src/Dashboard.jsx
+index 40a1113..0ffa3d9 100644
+--- a/client/src/Dashboard.jsx
++++ b/client/src/Dashboard.jsx
+@@ -1,8 +1,11 @@
+-import { useEffect, useRef, useState } from 'react'
++import { useEffect, useMemo, useRef, useState } from 'react'
+ import { api } from './api.js'
+ import Sidebar from './components/Sidebar.jsx'
+ import Topbar from './components/Topbar.jsx'
+ import { downloadCsv } from './lib/csv.js'
++import { countBy, blockUsage, typeColor } from './lib/stats.js'
++import DonutChart from './components/charts/DonutChart.jsx'
++import BarChart from './components/charts/BarChart.jsx'
+ import Icon from './components/Icon.jsx'
+ import Modal from './components/Modal.jsx'
+ import StatCards from './components/StatCards.jsx'
+@@ -85,6 +88,16 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+     loadDevices()
+   }
+ 
++  // numbers for the charts
++  const typeData = useMemo(() => Object.entries(countBy(devices, 'type')).sort((a, b) => b[1] - a[1])
++    .map(([label, value]) => ({ label, value, color: typeColor(label) })), [devices])
++  const staticCount = devices.filter((d) => d.status === 'static').length
++  const assignData = [
++    { label: 'Static', value: staticCount, color: 'var(--cyan)' },
++    { label: 'DHCP', value: devices.length - staticCount, color: 'var(--pink)' },
++  ]
++  const blocks = useMemo(() => blockUsage(subnet, devices), [subnet, devices])
++
+   const goTo = (id) => {
+     setActive(id)
+     setMenuOpen(false)
+@@ -103,6 +116,27 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+ 
+         <StatCards devices={devices} subnet={subnet} onUse={(ip) => openForm({ ip })} />
+ 
++        <div className="dash-cols">
++          <div className="dash-left">
++            <div className="dash-pair">
++              <section className="card">
++                <div className="card-head"><h2>Devices by type</h2></div>
++                <DonutChart data={typeData} centerValue={devices.length} centerLabel="devices" title="Devices by type" />
++              </section>
++              <section className="card">
++                <div className="card-head"><h2>Static vs DHCP</h2></div>
++                <DonutChart data={assignData} centerValue={staticCount} centerLabel="static" title="Static versus DHCP devices" />
++              </section>
++            </div>
++          </div>
++          <div className="dash-right">
++            <section className="card">
++              <div className="card-head"><h2>Address usage by block</h2></div>
++              <BarChart data={blocks} title="Used addresses per block of the subnet" />
++            </section>
++          </div>
++        </div>
++
+         <section className="card" id="subnet">
+           <div className="card-head">
+             <h2>Subnet map</h2>
+diff --git a/client/src/components/charts/BarChart.jsx b/client/src/components/charts/BarChart.jsx
+new file mode 100644
+index 0000000..4a927e7
+--- /dev/null
++++ b/client/src/components/charts/BarChart.jsx
+@@ -0,0 +1,24 @@
++// Vertical bars with gridlines. data: [{ label, value }]
++export default function BarChart({ data, title }) {
++  if (!data.length) return <p className="empty">Pick a subnet to see its usage.</p>
++  const max = Math.max(4, ...data.map((d) => d.value))
++  const steps = [0, 0.25, 0.5, 0.75, 1]
++
++  return (
++    <div className="bars" role="img" aria-label={title}>
++      <div className="bars-grid">
++        {steps.map((s) => <span key={s} style={{ bottom: s * 100 + '%' }}><em>{Math.round(max * s)}</em></span>)}
++      </div>
++      <div className="bars-row">
++        {data.map((d) => (
++          <div className="bcol" key={d.label} title={`${d.label}: ${d.value} used`}>
++            <div className="btrack">
++              <div className="bfill" style={{ height: (d.value / max) * 100 + '%' }}><span>{d.value || ''}</span></div>
++            </div>
++            <small>{d.label}</small>
++          </div>
++        ))}
++      </div>
++    </div>
++  )
++}
+diff --git a/client/src/components/charts/DonutChart.jsx b/client/src/components/charts/DonutChart.jsx
+new file mode 100644
+index 0000000..6d6b043
+--- /dev/null
++++ b/client/src/components/charts/DonutChart.jsx
+@@ -0,0 +1,36 @@
++// A ring chart drawn with SVG circles. data: [{ label, value, color }]
++export default function DonutChart({ data, centerValue, centerLabel, title }) {
++  const total = data.reduce((n, d) => n + d.value, 0)
++  const R = 62
++  const C = 2 * Math.PI * R
++  const gap = data.filter((d) => d.value > 0).length > 1 ? 5 : 0
++
++  let offset = 0
++  const segs = data.filter((d) => d.value > 0).map((d) => {
++    const len = (d.value / total) * C
++    const seg = { ...d, len, offset }
++    offset += len
++    return seg
++  })
++
++  return (
++    <div className="donut">
++      <svg viewBox="0 0 160 160" className="donut-svg" role="img" aria-label={title}>
++        <circle cx="80" cy="80" r={R} fill="none" strokeWidth="18" style={{ stroke: 'var(--line)' }} />
++        {segs.map((s) => (
++          <circle key={s.label} cx="80" cy="80" r={R} fill="none" strokeWidth="18" transform="rotate(-90 80 80)"
++            strokeDasharray={`${Math.max(0, s.len - gap)} ${C}`} strokeDashoffset={-s.offset} style={{ stroke: s.color }}>
++            <title>{`${s.label}: ${s.value}`}</title>
++          </circle>
++        ))}
++        <text x="80" y="79" textAnchor="middle" className="donut-val">{centerValue}</text>
++        <text x="80" y="98" textAnchor="middle" className="donut-lbl">{centerLabel}</text>
++      </svg>
++      <ul className="donut-legend">
++        {data.map((d) => (
++          <li key={d.label}><span className="ring" style={{ borderColor: d.color }} /><span>{d.label}</span><b>{d.value}</b></li>
++        ))}
++      </ul>
++    </div>
++  )
++}
+diff --git a/client/src/lib/stats.js b/client/src/lib/stats.js
+new file mode 100644
+index 0000000..4eec278
+--- /dev/null
++++ b/client/src/lib/stats.js
+@@ -0,0 +1,28 @@
++import { formatIp } from '../ip.js'
++
++// One colour per device type, used by the charts and the sidebar.
++export const TYPE_COLORS = {
++  Router: '#22d3c5', Switch: '#3b82f6', Server: '#8b5cf6', PC: '#ff5ec7', Printer: '#f5a45d', Phone: '#34d399', Other: '#94a3b8',
++}
++export const typeColor = (type) => TYPE_COLORS[type] || TYPE_COLORS.Other
++
++export function countBy(devices, key) {
++  const out = {}
++  for (const d of devices) out[d[key]] = (out[d[key]] || 0) + 1
++  return out
++}
++
++// Splits the subnet's usable addresses into 8 equal blocks and counts the used ones in each.
++export function blockUsage(subnet, devices, blocks = 8) {
++  if (!subnet) return []
++  const span = subnet.lastNum - subnet.firstNum + 1
++  const size = Math.max(1, Math.ceil(span / blocks))
++  const out = []
++  for (let i = 0; i < blocks; i++) {
++    const from = subnet.firstNum + i * size
++    if (from > subnet.lastNum) break
++    const to = Math.min(subnet.lastNum, from + size - 1)
++    out.push({ label: '.' + formatIp(from).split('.')[3], value: devices.filter((d) => d.ipNum >= from && d.ipNum <= to).length })
++  }
++  return out
++}
+diff --git a/client/src/styles.css b/client/src/styles.css
+index b783f33..01d1314 100644
+--- a/client/src/styles.css
++++ b/client/src/styles.css
+@@ -218,3 +218,28 @@ tbody tr:hover { background: color-mix(in srgb, var(--brand) 6%, transparent); }
+ .free-btn:hover { filter: brightness(1.08); }
+ @media (max-width: 1180px) { .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+ @media (max-width: 560px) { .summary { grid-template-columns: minmax(0, 1fr); } }
++
++/* ---------- charts ---------- */
++.dash-cols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; align-items: start; }
++.dash-left, .dash-right { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
++.dash-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
++.donut { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
++.donut-svg { width: 168px; height: 168px; flex: none; }
++.donut-val { font-size: 30px; font-weight: 800; fill: var(--ink); }
++.donut-lbl { font-size: 11px; fill: var(--mute); }
++.donut-legend { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; font-size: .84rem; flex: 1; min-width: 120px; }
++.donut-legend li { display: flex; align-items: center; gap: 10px; }
++.donut-legend b { margin-left: auto; font-variant-numeric: tabular-nums; }
++.ring { width: 16px; height: 16px; border-radius: 50%; border: 4px solid; flex: none; }
++.bars { position: relative; height: 236px; padding: 8px 0 0 30px; }
++.bars-grid { position: absolute; left: 30px; right: 0; top: 8px; bottom: 26px; }
++.bars-grid span { position: absolute; left: 0; right: 0; border-top: 1px solid var(--line); }
++.bars-grid em { position: absolute; left: -30px; top: -9px; width: 24px; text-align: right; font-size: .7rem; font-style: normal; color: var(--mute); }
++.bars-row { position: relative; display: flex; gap: 8px; height: 100%; }
++.bcol { flex: 1; display: flex; flex-direction: column; align-items: center; min-width: 0; }
++.btrack { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
++.bfill { position: relative; width: 62%; min-height: 3px; border-radius: 7px 7px 0 0; background: linear-gradient(180deg, var(--cyan), #6d5cf6); transition: height .5s; }
++.bfill span { position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font-size: .72rem; color: var(--mute); }
++.bcol small { height: 26px; line-height: 26px; font-size: .7rem; color: var(--mute); }
++@media (max-width: 1100px) { .dash-cols { grid-template-columns: minmax(0, 1fr); } }
++@media (max-width: 700px) { .dash-pair { grid-template-columns: minmax(0, 1fr); } }
+-- 
+2.43.0
+

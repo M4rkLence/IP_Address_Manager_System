@@ -1,0 +1,126 @@
+From fa229ddee42b126854e5a47602ac30ec769a4101 Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Wed, 18 Nov 2026 05:12:07 +0000
+Subject: [PATCH] IP Address Manager update 34
+
+---
+ client/src/components/StatCards.jsx | 49 ++++++++++++++++-------------
+ client/src/styles.css               | 31 ++++++++++++++++++
+ 2 files changed, 59 insertions(+), 21 deletions(-)
+
+diff --git a/client/src/components/StatCards.jsx b/client/src/components/StatCards.jsx
+index 9d85862..e0bb171 100644
+--- a/client/src/components/StatCards.jsx
++++ b/client/src/components/StatCards.jsx
+@@ -1,41 +1,48 @@
++import Icon from './Icon.jsx'
++
++const utc = (s) => Date.parse(s.replace(' ', 'T') + 'Z')
++
+ export default function StatCards({ devices, subnet, onUse }) {
+   const staticCount = devices.filter((d) => d.status === 'static').length
+   const dhcpCount = devices.length - staticCount
++  const weekAgo = Date.now() - 7 * 86_400_000
++  const recent = devices.filter((d) => d.createdAt && utc(d.createdAt) >= weekAgo).length
+   const pct = subnet ? Math.round((subnet.usedCount / subnet.usable) * 100) : 0
+-  const level = pct >= 90 ? 'hot' : pct >= 70 ? 'warm' : ''
+ 
+   return (
+     <section className="summary" aria-label="Summary">
+-      <div className="stat">
+-        <div className="stat-label">Devices</div>
+-        <div className="stat-value">{devices.length}</div>
+-        <div className="stat-sub">all of your devices</div>
++      <div className="stat grad purple">
++        <div className="stat-label">Total devices</div>
++        <div className="stat-big"><b>{devices.length}</b><small>{devices.length === 1 ? 'device' : 'devices'}</small></div>
++        <div className="stat-foot">{recent} added in the last 7 days</div>
+       </div>
+ 
+-      <div className="stat">
++      <div className="stat grad cyan">
+         <div className="stat-label">Subnet usage</div>
+-        <div className="stat-value">{subnet ? pct + '%' : '-'}</div>
+-        <div className={'bar ' + level} role="progressbar" aria-label="Subnet usage"
+-          aria-valuenow={pct} aria-valuemin="0" aria-valuemax="100">
++        <div className="stat-big"><b>{subnet ? subnet.usedCount : '-'}</b><small>{subnet ? `of ${subnet.usable} addresses` : ''}</small></div>
++        <div className="bar" role="progressbar" aria-label="Subnet usage" aria-valuenow={pct} aria-valuemin="0" aria-valuemax="100">
+           <i style={{ width: pct + '%' }} />
+         </div>
+-        <div className="stat-sub">
+-          {subnet ? `${subnet.usedCount} of ${subnet.usable} used in ${subnet.cidr}` : 'Pick a subnet below'}
+-        </div>
++        <div className="stat-foot">{subnet ? `${pct}% of ${subnet.cidr}` : 'Pick a subnet below'}</div>
+       </div>
+ 
+-      <div className="stat">
+-        <div className="stat-label">Static / DHCP</div>
+-        <div className="stat-value">{staticCount} <span className="slash">/</span> {dhcpCount}</div>
+-        <div className="stat-sub">fixed vs automatic</div>
++      <div className="stat plain">
++        <div className="pillrow">
++          <span className="pic pinkg"><Icon name="server" size={16} /></span><span>Static</span>
++          <b className="pcount pinkc">{staticCount}</b>
++        </div>
++        <div className="pillrow">
++          <span className="pic cyang"><Icon name="router" size={16} /></span><span>DHCP</span>
++          <b className="pcount cyanc">{dhcpCount}</b>
++        </div>
+       </div>
+ 
+-      <div className="stat">
+-        <div className="stat-label">Next free address</div>
++      <div className="stat plain">
++        <div className="stat-label dim">Next free address</div>
+         {subnet && subnet.nextFree
+-          ? <button type="button" className="stat-link mono" onClick={() => onUse(subnet.nextFree)}>{subnet.nextFree}</button>
+-          : <div className="stat-value">-</div>}
+-        <div className="stat-sub">tap it to assign</div>
++          ? <button type="button" className="free-btn mono" onClick={() => onUse(subnet.nextFree)}>{subnet.nextFree}</button>
++          : <div className="stat-big"><b>-</b></div>}
++        <div className="stat-foot dim">tap it to assign</div>
+       </div>
+     </section>
+   )
+diff --git a/client/src/styles.css b/client/src/styles.css
+index 996e779..b783f33 100644
+--- a/client/src/styles.css
++++ b/client/src/styles.css
+@@ -187,3 +187,34 @@ tbody tr:hover { background: color-mix(in srgb, var(--brand) 6%, transparent); }
+   .btn-text, .uname { display: none; }
+   .userchip { padding: 3px; }
+ }
++
++/* ---------- summary cards ---------- */
++.summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
++.stat { position: relative; overflow: hidden; min-width: 0; padding: 18px 20px; border-radius: var(--radius); }
++.stat.plain { background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); }
++.stat.grad { color: #fff; box-shadow: 0 14px 34px rgba(0, 0, 0, .3); text-shadow: 0 1px 2px rgba(0, 0, 0, .16); }
++.stat.purple { background: var(--grad-purple); }
++.stat.cyan { background: var(--grad-cyan); }
++.stat.grad::after { content: ""; position: absolute; right: -46px; top: -46px; width: 150px; height: 150px; border-radius: 50%; background: rgba(255, 255, 255, .13); }
++.stat-label { font-size: .84rem; font-weight: 600; opacity: .92; }
++.stat-label.dim { color: var(--mute); opacity: 1; }
++.stat-big { margin: 8px 0 4px; }
++.stat-big b { font-size: 2.7rem; font-weight: 800; line-height: 1.1; letter-spacing: -.02em; }
++.stat-big small { margin-left: 8px; font-size: .92rem; opacity: .92; font-weight: 500; }
++.stat-foot { font-size: .82rem; opacity: .92; }
++.stat-foot.dim { color: var(--mute); opacity: 1; }
++.bar { height: 8px; border-radius: 99px; background: rgba(255, 255, 255, .3); overflow: hidden; margin: 10px 0 8px; }
++.bar i { display: block; height: 100%; background: #fff; border-radius: 99px; transition: width .4s; }
++.pillrow { display: flex; align-items: center; gap: 12px; padding: 8px 2px; font-size: .9rem; font-weight: 600; }
++.pillrow + .pillrow { border-top: 1px solid var(--line); }
++.pic { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; color: #fff; }
++.pic.pinkg { background: linear-gradient(135deg, #ff7ad9, #c26bff); }
++.pic.cyang { background: linear-gradient(135deg, #1fd9c4, #3b82f6); }
++.pcount { margin-left: auto; padding: 3px 16px; border-radius: 99px; font-size: .82rem; }
++.pcount.pinkc { background: color-mix(in srgb, var(--pink) 18%, transparent); color: var(--pink); }
++.pcount.cyanc { background: color-mix(in srgb, var(--cyan) 18%, transparent); color: var(--cyan); }
++.free-btn { display: block; margin: 8px 0 6px; padding: 8px 18px; font-size: 1.15rem; font-weight: 700; color: #fff; background: var(--grad-purple);
++  border: 0; border-radius: 14px; cursor: pointer; box-shadow: 0 8px 20px rgba(166, 108, 246, .35); }
++.free-btn:hover { filter: brightness(1.08); }
++@media (max-width: 1180px) { .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
++@media (max-width: 560px) { .summary { grid-template-columns: minmax(0, 1fr); } }
+-- 
+2.43.0
+

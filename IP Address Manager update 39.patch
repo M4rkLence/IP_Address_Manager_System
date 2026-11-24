@@ -1,0 +1,25 @@
+From 76fa0d7fbc593b6c2f42a6d0669beec4ff550e1a Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Wed, 18 Nov 2026 11:40:54 +0000
+Subject: [PATCH] IP Address Manager update 39
+
+---
+ client/src/components/charts/LineChart.jsx | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/client/src/components/charts/LineChart.jsx b/client/src/components/charts/LineChart.jsx
+index 512b874..9651a01 100644
+--- a/client/src/components/charts/LineChart.jsx
++++ b/client/src/components/charts/LineChart.jsx
+@@ -52,7 +52,7 @@ export default function LineChart({ dates, series, title }) {
+           </g>
+         ))}
+         {dates.map((d, i) => (i % 2 === 0 ? <line key={i} x1={x(i)} x2={x(i)} y1={PAD.t} y2={H - PAD.b} className="lc-grid faint" /> : null))}
+-        {dates.map((d, i) => (i % 3 === 0 || i === n - 1 ? (
++        {dates.map((d, i) => (i % 3 === 0 ? (
+           <text key={i} x={x(i)} y={H - 8} textAnchor="middle" className="lc-tick">{fmt(d)}</text>
+         ) : null))}
+ 
+-- 
+2.43.0
+

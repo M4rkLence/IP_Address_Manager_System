@@ -1,0 +1,23 @@
+From 1993f8fd645d189970b06d5da660e0708446f01d Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Wed, 18 Nov 2026 11:41:36 +0000
+Subject: [PATCH] IP Address Manager update 40
+
+---
+ client/src/styles.css | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/client/src/styles.css b/client/src/styles.css
+index f529ff2..51626b9 100644
+--- a/client/src/styles.css
++++ b/client/src/styles.css
+@@ -288,3 +288,6 @@ tbody tr:hover { background: color-mix(in srgb, var(--brand) 6%, transparent); }
+   td.rowbtns { justify-content: flex-end; }
+   .stat-big b { font-size: 2.2rem; }
+ }
++
++/* light theme: the selected sidebar row is pale, so its count badge must be dark */
++:root[data-theme="light"] .sb-item.on .sb-count { background: rgba(163, 53, 224, .16); color: var(--brand); }
+-- 
+2.43.0
+

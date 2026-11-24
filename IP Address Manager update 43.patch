@@ -1,0 +1,278 @@
+From 5a8a3ea27e2ec3030c9f1db1bc9050e3549541d9 Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Sun, 22 Nov 2026 01:32:32 +0000
+Subject: [PATCH] IP Address Manager update 43
+
+---
+ server/api.test.js | 127 +++++++++++++++++++++++++++++++++++++++++++++
+ server/db.js       |  31 +++++++----
+ server/index.js    |   4 +-
+ server/validate.js |  17 +++++-
+ 4 files changed, 166 insertions(+), 13 deletions(-)
+ create mode 100644 server/api.test.js
+
+diff --git a/server/api.test.js b/server/api.test.js
+new file mode 100644
+index 0000000..7b78f99
+--- /dev/null
++++ b/server/api.test.js
+@@ -0,0 +1,127 @@
++import test from 'node:test'
++import assert from 'node:assert/strict'
++import { spawn } from 'node:child_process'
++import { mkdtempSync, rmSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { fileURLToPath } from 'node:url'
++import { DatabaseSync } from 'node:sqlite'
++
++const here = fileURLToPath(new URL('.', import.meta.url))
++const dir = mkdtempSync(join(tmpdir(), 'ipam-'))
++const PORT = 3950 + Math.floor(Math.random() * 40)
++let server
++
++// a tiny API client that keeps one login cookie per "person"
++function client() {
++  let cookie = ''
++  return async (method, path, body) => {
++    const res = await fetch(`http://localhost:${PORT}/api${path}`, {
++      method, headers: { 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) },
++      body: body === undefined ? undefined : JSON.stringify(body),
++    })
++    const set = res.headers.get('set-cookie')
++    if (set) cookie = set.split(';')[0]
++    const text = await res.text()
++    return { status: res.status, data: text ? JSON.parse(text) : null }
++  }
++}
++
++async function start(dbFile, port) {
++  const p = spawn(process.execPath, ['index.js'], { cwd: here, env: { ...process.env, PORT: String(port), DB_FILE: dbFile }, stdio: 'ignore' })
++  for (let i = 0; i < 60; i++) {
++    try { if ((await fetch(`http://localhost:${port}/api/types`)).ok) return p } catch { /* not up yet */ }
++    await new Promise((r) => setTimeout(r, 100))
++  }
++  throw new Error('server did not start')
++}
++
++test.before(async () => { server = await start(join(dir, 'test.db'), PORT) })
++test.after(() => { server.kill(); rmSync(dir, { recursive: true, force: true }) })
++
++test('departments, routers, Ethernet ports and prefixes', async () => {
++  const alice = client()
++  assert.equal((await alice('POST', '/register', { username: 'alice', password: 'password123' })).status, 201)
++
++  // departments
++  const acc = (await alice('POST', '/departments', { name: 'Accounting' })).data
++  assert.equal(acc.name, 'Accounting')
++  assert.equal((await alice('POST', '/departments', { name: 'accounting' })).status, 409, 'names are not case sensitive')
++  assert.equal((await alice('POST', '/departments', { name: '   ' })).status, 400)
++  const hr = (await alice('POST', '/departments', { name: 'HR' })).data
++
++  // routers
++  const r1 = (await alice('POST', '/routers', { departmentId: acc.id, name: 'R1' })).data
++  assert.equal(r1.departmentName, 'Accounting')
++  assert.equal((await alice('POST', '/routers', { departmentId: acc.id, name: 'r1' })).status, 409)
++  assert.equal((await alice('POST', '/routers', { departmentId: 9999, name: 'R9' })).status, 400)
++  assert.equal((await alice('POST', '/routers', { departmentId: hr.id, name: 'R1' })).status, 201, 'same name is fine in another department')
++
++  // IP addresses
++  const base = { routerId: r1.id, ether: 'Gi0/0', ip: '192.168.10.1', prefix: 24, name: 'Gateway', type: 'Router', status: 'static' }
++  const made = await alice('POST', '/devices', base)
++  assert.equal(made.status, 201)
++  assert.equal(made.data.cidr, '192.168.10.1/24')
++  assert.equal(made.data.departmentName, 'Accounting')
++  assert.equal(made.data.routerName, 'R1')
++  assert.equal(made.data.ether, 'Gi0/0')
++  assert.equal((await alice('POST', '/devices', { ...base, routerId: undefined, ip: '192.168.10.2' })).status, 400, 'router is required')
++  assert.equal((await alice('POST', '/devices', { ...base, ether: ' ', ip: '192.168.10.2' })).status, 400, 'port is required')
++  assert.equal((await alice('POST', '/devices', { ...base, prefix: 33, ip: '192.168.10.2' })).status, 400)
++  assert.equal((await alice('POST', '/devices', { ...base, prefix: '', ip: '192.168.10.2' })).status, 400)
++  assert.equal((await alice('POST', '/devices', { ...base, prefix: '/25', ip: '192.168.10.2', name: 'PC1', type: 'PC' })).data.prefix, 25, '"/25" is accepted')
++  const dup = await alice('POST', '/devices', { ...base, name: 'Other' })
++  assert.equal(dup.status, 409)
++  assert.match(dup.data.error, /Accounting \/ R1 \/ Gi0\/0/)
++  assert.equal(dup.data.suggestion, '192.168.10.3')
++
++  // counts shown on the big buttons
++  const deps = (await alice('GET', '/departments')).data
++  assert.deepEqual(deps.map((d) => [d.name, d.routerCount, d.ipCount]), [['Accounting', 1, 2], ['HR', 1, 0]])
++  const rts = (await alice('GET', '/routers')).data
++  assert.deepEqual(rts.map((r) => [r.departmentName, r.name, r.ipCount, r.etherCount]), [['Accounting', 'R1', 2, 1], ['HR', 'R1', 0, 0]])
++
++  // another person cannot see or use them
++  const bob = client()
++  await bob('POST', '/register', { username: 'bob', password: 'password456' })
++  assert.deepEqual((await bob('GET', '/departments')).data, [])
++  assert.equal((await bob('POST', '/devices', { ...base, ip: '10.0.0.1' })).status, 400, "bob cannot use alice's router")
++  assert.equal((await bob('PUT', `/departments/${acc.id}`, { name: 'Mine' })).status, 404)
++  assert.equal((await bob('DELETE', `/routers/${r1.id}`)).status, 404)
++
++  // rename, edit, move
++  assert.equal((await alice('PUT', `/departments/${hr.id}`, { name: 'Accounting' })).status, 409)
++  assert.equal((await alice('PUT', `/departments/${hr.id}`, { name: 'Human Resources' })).data.name, 'Human Resources')
++  const moved = await alice('PUT', `/devices/${made.data.id}`, { ...base, ether: 'Gi0/1', routerId: rts[1].id })
++  assert.equal(moved.data.departmentName, 'Human Resources')
++  assert.equal(moved.data.ether, 'Gi0/1')
++
++  // deleting a router or a department deletes the addresses inside it
++  assert.equal((await alice('DELETE', `/routers/${rts[1].id}`)).status, 204)
++  assert.equal((await alice('GET', '/devices')).data.length, 1)
++  assert.equal((await alice('DELETE', `/departments/${acc.id}`)).status, 204)
++  assert.equal((await alice('GET', '/devices')).data.length, 0)
++})
++
++test('addresses saved by an older version are moved under "Unassigned"', async () => {
++  const file = join(dir, 'old.db')
++  const old = new DatabaseSync(file)
++  old.exec(`
++    PRAGMA foreign_keys = ON;
++    CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE COLLATE NOCASE, password_hash TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
++    CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER NOT NULL);
++    CREATE TABLE devices (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, ip INTEGER NOT NULL,
++      name TEXT NOT NULL, type TEXT NOT NULL, status TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE (user_id, ip));
++    INSERT INTO users (username, password_hash) VALUES ('legacy', 'x:y');
++    INSERT INTO devices (user_id, ip, name, type, status) VALUES (1, 3232235786, 'Old printer', 'Printer', 'static');
++  `)
++  old.close()
++  const p = await start(file, PORT + 50)
++  try {
++    const db = new DatabaseSync(file)
++    const row = db.prepare(`SELECT d.name, d.ether, d.prefix, r.name AS router, dep.name AS dept FROM devices d
++      JOIN routers r ON r.id = d.router_id JOIN departments dep ON dep.id = r.department_id`).get()
++    db.close()
++    assert.deepEqual({ ...row }, { name: 'Old printer', ether: 'Not set', prefix: 24, router: 'Unassigned', dept: 'Unassigned' })
++  } finally { p.kill() }
++})
+diff --git a/server/db.js b/server/db.js
+index 9e80f5c..1980b04 100644
+--- a/server/db.js
++++ b/server/db.js
+@@ -102,38 +102,47 @@ export const TYPES = ['Router', 'Switch', 'Server', 'PC', 'Printer', 'Phone', 'O
+ export const STATUSES = ['static', 'dhcp']
+ 
+ const toDevice = (r) => ({
+-  id: Number(r.id), ip: formatIp(r.ip), ipNum: r.ip,
+-  name: r.name, type: r.type, status: r.status, notes: r.notes,
++  id: Number(r.id), ip: formatIp(r.ip), ipNum: r.ip, prefix: r.prefix, cidr: `${formatIp(r.ip)}/${r.prefix}`,
++  routerId: r.router_id === null ? null : Number(r.router_id), routerName: r.router_name,
++  departmentId: r.department_id === null ? null : Number(r.department_id), departmentName: r.department_name,
++  ether: r.ether, name: r.name, type: r.type, status: r.status, notes: r.notes,
+   createdAt: r.created_at, // UTC, like "2026-11-12 08:30:00"
+ })
+ 
+-// Every query below filters by user_id, so people only ever see their own devices.
++// An IP address together with the router and the department it belongs to.
++const DEVICES = `
++  SELECT d.*, r.name AS router_name, r.department_id AS department_id, dep.name AS department_name
++  FROM devices d
++  LEFT JOIN routers r ON r.id = d.router_id
++  LEFT JOIN departments dep ON dep.id = r.department_id`
++
++// Every query below filters by user_id, so people only ever see their own addresses.
+ export const listDevices = (userId) =>
+-  db.prepare('SELECT * FROM devices WHERE user_id = ? ORDER BY ip').all(userId).map(toDevice)
++  db.prepare(DEVICES + ' WHERE d.user_id = ? ORDER BY d.ip').all(userId).map(toDevice)
+ 
+ export const getDevice = (id, userId) => {
+-  const r = db.prepare('SELECT * FROM devices WHERE id = ? AND user_id = ?').get(id, userId)
++  const r = db.prepare(DEVICES + ' WHERE d.id = ? AND d.user_id = ?').get(id, userId)
+   return r ? toDevice(r) : null
+ }
+ 
+ export const findByIp = (userId, ip) => {
+-  const r = db.prepare('SELECT * FROM devices WHERE user_id = ? AND ip = ?').get(userId, ip)
++  const r = db.prepare(DEVICES + ' WHERE d.user_id = ? AND d.ip = ?').get(userId, ip)
+   return r ? toDevice(r) : null
+ }
+ 
+ export const devicesInRange = (userId, from, to) =>
+-  db.prepare('SELECT * FROM devices WHERE user_id = ? AND ip BETWEEN ? AND ? ORDER BY ip')
++  db.prepare(DEVICES + ' WHERE d.user_id = ? AND d.ip BETWEEN ? AND ? ORDER BY d.ip')
+     .all(userId, from, to).map(toDevice)
+ 
+ export function createDevice(userId, d) {
+-  const r = db.prepare('INSERT INTO devices (user_id, ip, name, type, status, notes) VALUES (?, ?, ?, ?, ?, ?)')
+-    .run(userId, d.ip, d.name, d.type, d.status, d.notes)
++  const r = db.prepare('INSERT INTO devices (user_id, router_id, ether, ip, prefix, name, type, status, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
++    .run(userId, d.routerId, d.ether, d.ip, d.prefix, d.name, d.type, d.status, d.notes)
+   return getDevice(Number(r.lastInsertRowid), userId)
+ }
+ 
+ export function updateDevice(id, userId, d) {
+-  db.prepare('UPDATE devices SET ip = ?, name = ?, type = ?, status = ?, notes = ? WHERE id = ? AND user_id = ?')
+-    .run(d.ip, d.name, d.type, d.status, d.notes, id, userId)
++  db.prepare('UPDATE devices SET router_id = ?, ether = ?, ip = ?, prefix = ?, name = ?, type = ?, status = ?, notes = ? WHERE id = ? AND user_id = ?')
++    .run(d.routerId, d.ether, d.ip, d.prefix, d.name, d.type, d.status, d.notes, id, userId)
+   return getDevice(id, userId)
+ }
+ 
+diff --git a/server/index.js b/server/index.js
+index 6548876..7e85293 100644
+--- a/server/index.js
++++ b/server/index.js
+@@ -42,7 +42,7 @@ function suggestFree(userId, ip) {
+ function conflict(userId, ip, ownId) {
+   const other = findByIp(userId, ip)
+   if (!other || other.id === ownId) return null
+-  return { error: `${other.ip} is already used by ${other.name}.`, suggestion: suggestFree(userId, ip) }
++  return { error: `${other.ip} is already used by ${other.name} (${other.departmentName} / ${other.routerName} / ${other.ether}).`, suggestion: suggestFree(userId, ip) }
+ }
+ 
+ function subnetInfo(userId, cidrText) {
+@@ -206,6 +206,7 @@ const server = http.createServer(async (req, res) => {
+     if (path === '/api/devices' && method === 'POST') {
+       const { error, value } = validateDevice(await readJson(req))
+       if (error) return send(res, 400, { error })
++      if (!getRouter(value.routerId, user.id)) return send(res, 400, { error: 'Choose one of your routers.' })
+       const dup = conflict(user.id, value.ip, null)
+       if (dup) return send(res, 409, dup)
+       return send(res, 201, createDevice(user.id, value))
+@@ -219,6 +220,7 @@ const server = http.createServer(async (req, res) => {
+       if (method === 'PUT') {
+         const { error, value } = validateDevice(await readJson(req))
+         if (error) return send(res, 400, { error })
++        if (!getRouter(value.routerId, user.id)) return send(res, 400, { error: 'Choose one of your routers.' })
+         const dup = conflict(user.id, value.ip, id)
+         if (dup) return send(res, 409, dup)
+         return send(res, 200, updateDevice(id, user.id, value))
+diff --git a/server/validate.js b/server/validate.js
+index 93501c5..676694a 100644
+--- a/server/validate.js
++++ b/server/validate.js
+@@ -4,8 +4,23 @@ import { TYPES, STATUSES } from './db.js'
+ // Checks the JSON body of POST/PUT. Returns { error } or { value }.
+ export function validateDevice(body) {
+   const b = body && typeof body === 'object' ? body : {}
++
++  const routerId = Number(b.routerId)
++  if (!Number.isInteger(routerId) || routerId < 1) return { error: 'Choose a department and a router.' }
++
++  const ether = String(b.ether ?? '').replace(/\s+/g, ' ').trim()
++  if (!ether) return { error: 'Ethernet port is required, for example Gi0/0.' }
++  if (ether.length > 30) return { error: 'Ethernet port must be 30 characters or fewer.' }
++
+   const ip = parseIp(b.ip)
+   if (ip === null) return { error: 'IP address is not valid. Use four numbers from 0 to 255, like 192.168.1.10.' }
++
++  // the prefix may be typed as 24 or /24
++  const prefixText = String(b.prefix ?? '').replace('/', '').trim()
++  const prefix = Number(prefixText)
++  if (prefixText === '' || !Number.isInteger(prefix) || prefix < 0 || prefix > 32)
++    return { error: 'Prefix must be a whole number from 0 to 32, like 24.' }
++
+   const name = String(b.name ?? '').trim()
+   if (!name) return { error: 'Device name is required.' }
+   if (name.length > 60) return { error: 'Device name must be 60 characters or fewer.' }
+@@ -14,7 +29,7 @@ export function validateDevice(body) {
+   const status = b.status ?? 'static'
+   if (!STATUSES.includes(status)) return { error: 'Status must be static or dhcp.' }
+   const notes = String(b.notes ?? '').trim().slice(0, 200)
+-  return { value: { ip, name, type, status, notes } }
++  return { value: { routerId, ether, ip, prefix, name, type, status, notes } }
+ }
+ 
+ // Name of a department or router.
+-- 
+2.43.0
+

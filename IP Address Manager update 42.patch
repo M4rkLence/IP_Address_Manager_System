@@ -1,0 +1,230 @@
+From b6e8856845721ee833d8ccfb29e21dac4c8fe4d7 Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Sun, 22 Nov 2026 01:31:38 +0000
+Subject: [PATCH] IP Address Manager update 42
+
+---
+ server/db.js       | 107 +++++++++++++++++++++++++++++++++++++++++++++
+ server/index.js    |  56 +++++++++++++++++++++++-
+ server/validate.js |   8 ++++
+ 3 files changed, 170 insertions(+), 1 deletion(-)
+
+diff --git a/server/db.js b/server/db.js
+index 5221d99..9e80f5c 100644
+--- a/server/db.js
++++ b/server/db.js
+@@ -66,6 +66,38 @@ db.exec(`
+   )
+ `)
+ 
++// ---------- departments and routers ----------
++db.exec(`
++  CREATE TABLE IF NOT EXISTS departments (
++    id      INTEGER PRIMARY KEY AUTOINCREMENT,
++    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
++    name    TEXT    NOT NULL COLLATE NOCASE,
++    UNIQUE (user_id, name)
++  );
++  CREATE TABLE IF NOT EXISTS routers (
++    id            INTEGER PRIMARY KEY AUTOINCREMENT,
++    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
++    department_id INTEGER NOT NULL REFERENCES departments(id) ON DELETE CASCADE,
++    name          TEXT    NOT NULL COLLATE NOCASE,
++    UNIQUE (department_id, name)
++  );
++`)
++
++// An IP address now belongs to a router and records the Ethernet port and the prefix it uses.
++const deviceCols = db.prepare('PRAGMA table_info(devices)').all().map((c) => c.name)
++if (!deviceCols.includes('router_id')) db.exec('ALTER TABLE devices ADD COLUMN router_id INTEGER REFERENCES routers(id) ON DELETE CASCADE')
++if (!deviceCols.includes('ether')) db.exec("ALTER TABLE devices ADD COLUMN ether TEXT NOT NULL DEFAULT ''")
++if (!deviceCols.includes('prefix')) db.exec('ALTER TABLE devices ADD COLUMN prefix INTEGER NOT NULL DEFAULT 24')
++
++// Addresses saved by older versions have no router yet: park them under "Unassigned".
++for (const { user_id } of db.prepare('SELECT DISTINCT user_id FROM devices WHERE router_id IS NULL').all()) {
++  db.prepare('INSERT OR IGNORE INTO departments (user_id, name) VALUES (?, ?)').run(user_id, 'Unassigned')
++  const dep = db.prepare('SELECT id FROM departments WHERE user_id = ? AND name = ?').get(user_id, 'Unassigned')
++  db.prepare('INSERT OR IGNORE INTO routers (user_id, department_id, name) VALUES (?, ?, ?)').run(user_id, dep.id, 'Unassigned')
++  const rt = db.prepare('SELECT id FROM routers WHERE department_id = ? AND name = ?').get(dep.id, 'Unassigned')
++  db.prepare("UPDATE devices SET router_id = ?, ether = 'Not set' WHERE user_id = ? AND router_id IS NULL").run(rt.id, user_id)
++}
++
+ export const TYPES = ['Router', 'Switch', 'Server', 'PC', 'Printer', 'Phone', 'Other']
+ export const STATUSES = ['static', 'dhcp']
+ 
+@@ -107,3 +139,78 @@ export function updateDevice(id, userId, d) {
+ 
+ export const deleteDevice = (id, userId) =>
+   db.prepare('DELETE FROM devices WHERE id = ? AND user_id = ?').run(id, userId).changes > 0
++
++// ---------- departments ----------
++const toDepartment = (r) => ({ id: Number(r.id), name: r.name, routerCount: Number(r.router_count), ipCount: Number(r.ip_count) })
++
++const DEPARTMENTS = `
++  SELECT d.id, d.name,
++    (SELECT COUNT(*) FROM routers r WHERE r.department_id = d.id) AS router_count,
++    (SELECT COUNT(*) FROM devices v JOIN routers r ON r.id = v.router_id WHERE r.department_id = d.id) AS ip_count
++  FROM departments d`
++
++export const listDepartments = (userId) =>
++  db.prepare(DEPARTMENTS + ' WHERE d.user_id = ? ORDER BY d.name').all(userId).map(toDepartment)
++
++export const getDepartment = (id, userId) => {
++  const r = db.prepare(DEPARTMENTS + ' WHERE d.id = ? AND d.user_id = ?').get(id, userId)
++  return r ? toDepartment(r) : null
++}
++
++export const findDepartmentByName = (userId, name) => {
++  const r = db.prepare('SELECT id FROM departments WHERE user_id = ? AND name = ?').get(userId, name)
++  return r ? getDepartment(Number(r.id), userId) : null
++}
++
++export function createDepartment(userId, name) {
++  const r = db.prepare('INSERT INTO departments (user_id, name) VALUES (?, ?)').run(userId, name)
++  return getDepartment(Number(r.lastInsertRowid), userId)
++}
++
++export function renameDepartment(id, userId, name) {
++  db.prepare('UPDATE departments SET name = ? WHERE id = ? AND user_id = ?').run(name, id, userId)
++  return getDepartment(id, userId)
++}
++
++// Deleting a department also deletes its routers and their IP addresses.
++export const deleteDepartment = (id, userId) =>
++  db.prepare('DELETE FROM departments WHERE id = ? AND user_id = ?').run(id, userId).changes > 0
++
++// ---------- routers ----------
++const toRouter = (r) => ({
++  id: Number(r.id), name: r.name, departmentId: Number(r.department_id), departmentName: r.department_name,
++  ipCount: Number(r.ip_count), etherCount: Number(r.ether_count),
++})
++
++const ROUTERS = `
++  SELECT r.id, r.name, r.department_id, d.name AS department_name,
++    (SELECT COUNT(*) FROM devices v WHERE v.router_id = r.id) AS ip_count,
++    (SELECT COUNT(DISTINCT lower(v.ether)) FROM devices v WHERE v.router_id = r.id) AS ether_count
++  FROM routers r JOIN departments d ON d.id = r.department_id`
++
++export const listRouters = (userId) =>
++  db.prepare(ROUTERS + ' WHERE r.user_id = ? ORDER BY d.name, r.name').all(userId).map(toRouter)
++
++export const getRouter = (id, userId) => {
++  const r = db.prepare(ROUTERS + ' WHERE r.id = ? AND r.user_id = ?').get(id, userId)
++  return r ? toRouter(r) : null
++}
++
++export const findRouterByName = (departmentId, name) => {
++  const r = db.prepare('SELECT id, user_id FROM routers WHERE department_id = ? AND name = ?').get(departmentId, name)
++  return r ? getRouter(Number(r.id), Number(r.user_id)) : null
++}
++
++export function createRouter(userId, departmentId, name) {
++  const r = db.prepare('INSERT INTO routers (user_id, department_id, name) VALUES (?, ?, ?)').run(userId, departmentId, name)
++  return getRouter(Number(r.lastInsertRowid), userId)
++}
++
++export function renameRouter(id, userId, name) {
++  db.prepare('UPDATE routers SET name = ? WHERE id = ? AND user_id = ?').run(name, id, userId)
++  return getRouter(id, userId)
++}
++
++// Deleting a router also deletes its IP addresses.
++export const deleteRouter = (id, userId) =>
++  db.prepare('DELETE FROM routers WHERE id = ? AND user_id = ?').run(id, userId).changes > 0
+diff --git a/server/index.js b/server/index.js
+index d029ebf..6548876 100644
+--- a/server/index.js
++++ b/server/index.js
+@@ -1,11 +1,13 @@
+ import http from 'node:http'
+ import { formatIp, parseCidr } from './ip.js'
+-import { validateDevice } from './validate.js'
++import { validateDevice, validateName } from './validate.js'
+ import { hashPassword, verifyPassword, hashToken, newToken, validateCredentials } from './auth.js'
+ import {
+   listDevices, getDevice, findByIp, devicesInRange,
+   createDevice, updateDevice, deleteDevice, TYPES,
+   createUser, getUserByUsername, createSession, getSessionUser, deleteSession,
++  listDepartments, getDepartment, findDepartmentByName, createDepartment, renameDepartment, deleteDepartment,
++  listRouters, getRouter, findRouterByName, createRouter, renameRouter, deleteRouter,
+ } from './db.js'
+ 
+ const PORT = process.env.PORT || 3001
+@@ -147,6 +149,58 @@ const server = http.createServer(async (req, res) => {
+     const user = currentUser(req)
+     if (!user) return send(res, 401, { error: 'Please log in.' })
+ 
++    // ---------- departments ----------
++    if (path === '/api/departments' && method === 'GET') return send(res, 200, listDepartments(user.id))
++
++    if (path === '/api/departments' && method === 'POST') {
++      const { error, value } = validateName(await readJson(req), 'Department')
++      if (error) return send(res, 400, { error })
++      if (findDepartmentByName(user.id, value.name)) return send(res, 409, { error: `The department "${value.name}" already exists.` })
++      return send(res, 201, createDepartment(user.id, value.name))
++    }
++
++    const dm = path.match(/^\/api\/departments\/(\d+)$/)
++    if (dm) {
++      const id = Number(dm[1])
++      if (!getDepartment(id, user.id)) return send(res, 404, { error: 'Department not found.' })
++      if (method === 'PUT') {
++        const { error, value } = validateName(await readJson(req), 'Department')
++        if (error) return send(res, 400, { error })
++        const same = findDepartmentByName(user.id, value.name)
++        if (same && same.id !== id) return send(res, 409, { error: `The department "${value.name}" already exists.` })
++        return send(res, 200, renameDepartment(id, user.id, value.name))
++      }
++      if (method === 'DELETE') { deleteDepartment(id, user.id); return send(res, 204, null) }
++    }
++
++    // ---------- routers ----------
++    if (path === '/api/routers' && method === 'GET') return send(res, 200, listRouters(user.id))
++
++    if (path === '/api/routers' && method === 'POST') {
++      const body = await readJson(req)
++      const { error, value } = validateName(body, 'Router')
++      if (error) return send(res, 400, { error })
++      const dep = getDepartment(Number(body.departmentId), user.id)
++      if (!dep) return send(res, 400, { error: 'Choose a department for the router.' })
++      if (findRouterByName(dep.id, value.name)) return send(res, 409, { error: `${dep.name} already has a router named "${value.name}".` })
++      return send(res, 201, createRouter(user.id, dep.id, value.name))
++    }
++
++    const rm = path.match(/^\/api\/routers\/(\d+)$/)
++    if (rm) {
++      const id = Number(rm[1])
++      const router = getRouter(id, user.id)
++      if (!router) return send(res, 404, { error: 'Router not found.' })
++      if (method === 'PUT') {
++        const { error, value } = validateName(await readJson(req), 'Router')
++        if (error) return send(res, 400, { error })
++        const same = findRouterByName(router.departmentId, value.name)
++        if (same && same.id !== id) return send(res, 409, { error: `${router.departmentName} already has a router named "${value.name}".` })
++        return send(res, 200, renameRouter(id, user.id, value.name))
++      }
++      if (method === 'DELETE') { deleteRouter(id, user.id); return send(res, 204, null) }
++    }
++
+     if (path === '/api/devices' && method === 'GET') return send(res, 200, listDevices(user.id))
+ 
+     if (path === '/api/devices' && method === 'POST') {
+diff --git a/server/validate.js b/server/validate.js
+index 33f8cd2..93501c5 100644
+--- a/server/validate.js
++++ b/server/validate.js
+@@ -16,3 +16,11 @@ export function validateDevice(body) {
+   const notes = String(b.notes ?? '').trim().slice(0, 200)
+   return { value: { ip, name, type, status, notes } }
+ }
++
++// Name of a department or router.
++export function validateName(body, label) {
++  const name = String((body && body.name) ?? '').replace(/\s+/g, ' ').trim()
++  if (!name) return { error: `${label} name is required.` }
++  if (name.length > 40) return { error: `${label} name must be 40 characters or fewer.` }
++  return { value: { name } }
++}
+-- 
+2.43.0
+

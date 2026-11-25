@@ -1,0 +1,419 @@
+From 6dab058acde20548f542c63545d429ec03bea8b7 Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Sun, 22 Nov 2026 01:33:58 +0000
+Subject: [PATCH] IP Address Manager update 44
+
+---
+ client/src/Dashboard.jsx             | 87 ++++++++++++++++++++++++++--
+ client/src/api.js                    |  8 +++
+ client/src/components/DeviceForm.jsx | 77 ++++++++++++++++++++----
+ client/src/components/Icon.jsx       |  2 +
+ client/src/components/NameForm.jsx   | 19 ++++++
+ client/src/components/Sidebar.jsx    | 12 +++-
+ client/src/components/Topbar.jsx     |  2 +-
+ client/src/styles.css                |  7 +++
+ 8 files changed, 192 insertions(+), 22 deletions(-)
+ create mode 100644 client/src/components/NameForm.jsx
+
+diff --git a/client/src/Dashboard.jsx b/client/src/Dashboard.jsx
+index e92ae01..4acc09d 100644
+--- a/client/src/Dashboard.jsx
++++ b/client/src/Dashboard.jsx
+@@ -11,11 +11,16 @@ import Icon from './components/Icon.jsx'
+ import Modal from './components/Modal.jsx'
+ import StatCards from './components/StatCards.jsx'
+ import DeviceForm from './components/DeviceForm.jsx'
++import NameForm from './components/NameForm.jsx'
+ import DeviceList from './components/DeviceList.jsx'
+ import SubnetGrid from './components/SubnetGrid.jsx'
+ 
+ export default function Dashboard({ user, onLogout, onExpired }) {
+   const [devices, setDevices] = useState([])
++  const [departments, setDepartments] = useState([])
++  const [routers, setRouters] = useState([])
++  const [selection, setSelection] = useState({ deptId: null, routerId: null }) // where the user is in Department > Router
++  const [dlg, setDlg] = useState({ open: false, key: 0, kind: 'department', mode: 'add', target: null, departmentId: null, error: '' })
+   const [types, setTypes] = useState(['PC'])
+   const [form, setForm] = useState({ open: false, key: 0, initial: {} })
+   const [formError, setFormError] = useState('')
+@@ -32,8 +37,10 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+   const [statusFilter, setStatusFilter] = useState('All')
+   const toastTimer = useRef(null)
+ 
++  // devices, departments and routers always load together, so every number on the page stays in step
+   const loadDevices = () =>
+-    api.listDevices().then(setDevices)
++    Promise.all([api.listDevices(), api.listDepartments(), api.listRouters()])
++      .then(([d, deps, rts]) => { setDevices(d); setDepartments(deps); setRouters(rts) })
+       .catch((e) => (e.status === 401 ? onExpired() : setLoadError(e.message)))
+ 
+   useEffect(() => {
+@@ -51,9 +58,11 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+       })
+   }, [cidr, devices])
+ 
++  // a new IP address starts in the department and router the user is looking at
+   const openForm = (initial = {}) => {
+     setFormError(''); setSuggestion('')
+-    setForm((f) => ({ open: true, key: f.key + 1, initial }))
++    const context = initial.id ? {} : { departmentId: selection.deptId ?? undefined, routerId: selection.routerId ?? undefined }
++    setForm((f) => ({ open: true, key: f.key + 1, initial: { ...context, ...initial } }))
+   }
+   const closeForm = () => setForm((f) => ({ ...f, open: false }))
+ 
+@@ -70,7 +79,7 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+       if (editing) await api.updateDevice(form.initial.id, values)
+       else await api.createDevice(values)
+       closeForm()
+-      notify(editing ? 'Device updated' : 'Device added')
++      notify(editing ? 'IP address updated' : 'IP address added')
+       await loadDevices()
+     } catch (e) {
+       if (e.status === 401) return onExpired()
+@@ -80,7 +89,7 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+   }
+ 
+   async function remove(d) {
+-    if (!window.confirm(`Delete ${d.name} (${d.ip})?`)) return
++    if (!window.confirm(`Delete ${d.name} (${d.cidr})?`)) return
+     try {
+       await api.deleteDevice(d.id)
+     } catch (e) {
+@@ -91,6 +100,53 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+     loadDevices()
+   }
+ 
++  // ---------- departments and routers ----------
++  const openName = (kind, mode, target = null, departmentId = null) =>
++    setDlg({ open: true, key: Date.now(), kind, mode, target, departmentId, error: '' })
++  const closeName = () => setDlg((d) => ({ ...d, open: false }))
++
++  async function saveName(name) {
++    try {
++      let saved
++      if (dlg.kind === 'department') {
++        saved = dlg.mode === 'add' ? await api.createDepartment(name) : await api.renameDepartment(dlg.target.id, name)
++        if (dlg.mode === 'add') setSelection({ deptId: saved.id, routerId: null }) // go straight into the new department
++        notify(dlg.mode === 'add' ? `Department ${saved.name} added` : `Department renamed to ${saved.name}`)
++      } else {
++        saved = dlg.mode === 'add' ? await api.createRouter(dlg.departmentId, name) : await api.renameRouter(dlg.target.id, name)
++        if (dlg.mode === 'add') setSelection({ deptId: saved.departmentId, routerId: saved.id })
++        notify(dlg.mode === 'add' ? `Router ${saved.name} added` : `Router renamed to ${saved.name}`)
++      }
++      closeName()
++      await loadDevices()
++    } catch (e) {
++      if (e.status === 401) return onExpired()
++      setDlg((d) => ({ ...d, error: e.message }))
++    }
++  }
++
++  async function removeDepartment(dep) {
++    const extra = dep.routerCount || dep.ipCount ? `\n\nIts ${dep.routerCount} router(s) and ${dep.ipCount} IP address(es) will be deleted too.` : ''
++    if (!window.confirm(`Delete the department ${dep.name}?${extra}`)) return
++    await api.deleteDepartment(dep.id)
++    setSelection({ deptId: null, routerId: null })
++    notify(`Deleted department ${dep.name}`)
++    loadDevices()
++  }
++
++  async function removeRouter(r) {
++    const extra = r.ipCount ? `\n\nIts ${r.ipCount} IP address(es) will be deleted too.` : ''
++    if (!window.confirm(`Delete the router ${r.name}?${extra}`)) return
++    await api.deleteRouter(r.id)
++    setSelection({ deptId: r.departmentId, routerId: null })
++    notify(`Deleted router ${r.name}`)
++    loadDevices()
++  }
++
++  // adding a department or router from inside the IP address form closes the form first
++  const addDepartmentFromForm = () => { closeForm(); openName('department', 'add') }
++  const addRouterFromForm = (departmentId) => { closeForm(); openName('router', 'add', null, Number(departmentId)) }
++
+   // numbers for the charts
+   const typeData = useMemo(() => Object.entries(countBy(devices, 'type')).sort((a, b) => b[1] - a[1])
+     .map(([label, value]) => ({ label, value, color: typeColor(label) })), [devices])
+@@ -102,6 +158,8 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+   const blocks = useMemo(() => blockUsage(subnet, devices), [subnet, devices])
+   const growth = useMemo(() => growthSeries(devices), [devices])
+ 
++  const _unused = { removeDepartment, removeRouter } // used by the Network panel in the next commit
++
+   const goTo = (id) => {
+     setActive(id)
+     setMenuOpen(false)
+@@ -119,7 +177,9 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+ 
+   return (
+     <div className="shell">
+-      <Sidebar user={user} devices={devices} types={types} typeFilter={typeFilter} statusFilter={statusFilter}
++      <Sidebar user={user} devices={devices} departments={departments} selectedDept={selection.deptId}
++        onDepartment={(id) => { setSelection({ deptId: id, routerId: null }); goTo('devices') }} onAddDepartment={() => openName('department', 'add')}
++        types={types} typeFilter={typeFilter} statusFilter={statusFilter}
+         onType={(t) => filterBy('type', t)} onStatus={(s) => filterBy('status', s)} active={active} onNav={goTo}
+         onDownload={() => downloadCsv(devices, 'ip-device-report.csv')} open={menuOpen} onClose={() => setMenuOpen(false)} />
+ 
+@@ -159,7 +219,8 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+             <section className="card">
+               <div className="card-head"><h2>Quick actions</h2></div>
+               <div className="qa">
+-                <button type="button" className="btn primary" onClick={() => openForm()}><Icon name="plus" size={16} /> Add device</button>
++                <button type="button" className="btn primary" onClick={() => openForm()}><Icon name="plus" size={16} /> Add IP address</button>
++                <button type="button" className="btn" onClick={() => openName('department', 'add')}><Icon name="building" size={16} /> Add department</button>
+                 <button type="button" className="btn cyan" disabled={!subnet || !subnet.nextFree}
+                   onClick={() => subnet && subnet.nextFree && openForm({ ip: subnet.nextFree })}><Icon name="zap" size={16} /> Use next free IP</button>
+                 <button type="button" className="btn" onClick={() => goTo('subnet')}><Icon name="map" size={16} /> View subnet map</button>
+@@ -203,6 +264,11 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+             key={form.key}
+             initial={form.initial}
+             types={types}
++            departments={departments}
++            routers={routers}
++            devices={devices}
++            onAddDepartment={addDepartmentFromForm}
++            onAddRouter={addRouterFromForm}
+             error={formError}
+             suggestion={suggestion}
+             onSave={save}
+@@ -210,6 +276,15 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+           />
+         </Modal>
+       )}
++      {dlg.open && (
++        <Modal onClose={closeName}>
++          <NameForm key={dlg.key} error={dlg.error} onSave={saveName} onCancel={closeName}
++            title={`${dlg.mode === 'add' ? 'Add' : 'Rename'} ${dlg.kind}`}
++            label={dlg.kind === 'department' ? 'Department name' : 'Router name'}
++            placeholder={dlg.kind === 'department' ? 'Accounting' : 'R1'}
++            initial={dlg.target ? dlg.target.name : ''} submitLabel={dlg.mode === 'add' ? `Add ${dlg.kind}` : 'Save'} />
++        </Modal>
++      )}
+       {toast && <div className="toast" role="status">{toast}</div>}
+     </div>
+   )
+diff --git a/client/src/api.js b/client/src/api.js
+index bb8f155..c20a1c4 100644
+--- a/client/src/api.js
++++ b/client/src/api.js
+@@ -26,5 +26,13 @@ export const api = {
+   createDevice: (d) => request('/devices', { method: 'POST', body: JSON.stringify(d) }),
+   updateDevice: (id, d) => request(`/devices/${id}`, { method: 'PUT', body: JSON.stringify(d) }),
+   deleteDevice: (id) => request(`/devices/${id}`, { method: 'DELETE' }),
++  listDepartments: () => request('/departments'),
++  createDepartment: (name) => request('/departments', { method: 'POST', body: JSON.stringify({ name }) }),
++  renameDepartment: (id, name) => request(`/departments/${id}`, { method: 'PUT', body: JSON.stringify({ name }) }),
++  deleteDepartment: (id) => request(`/departments/${id}`, { method: 'DELETE' }),
++  listRouters: () => request('/routers'),
++  createRouter: (departmentId, name) => request('/routers', { method: 'POST', body: JSON.stringify({ departmentId, name }) }),
++  renameRouter: (id, name) => request(`/routers/${id}`, { method: 'PUT', body: JSON.stringify({ name }) }),
++  deleteRouter: (id) => request(`/routers/${id}`, { method: 'DELETE' }),
+   subnet: (cidr) => request('/subnet?cidr=' + encodeURIComponent(cidr)),
+ }
+diff --git a/client/src/components/DeviceForm.jsx b/client/src/components/DeviceForm.jsx
+index a1bb592..d7fb473 100644
+--- a/client/src/components/DeviceForm.jsx
++++ b/client/src/components/DeviceForm.jsx
+@@ -1,23 +1,76 @@
+ import { useState } from 'react'
+ 
+-const BLANK = { ip: '', name: '', type: 'PC', status: 'static', notes: '' }
++const COMMON_PORTS = ['Gi0/0', 'Gi0/1', 'Gi0/2', 'Fa0/0', 'Fa0/1', 'Eth0', 'Eth1']
+ 
+-export default function DeviceForm({ initial, types, error, suggestion, onSave, onCancel }) {
+-  const [v, setV] = useState({ ...BLANK, ...initial })
++// Add or edit one IP address: which department, router and Ethernet port it is used on.
++export default function DeviceForm({ initial, types, departments, routers, devices, error, suggestion, onSave, onCancel, onAddDepartment, onAddRouter }) {
++  const start = initial || {}
++  const startRouter = routers.find((r) => r.id === start.routerId)
++  const startDept = start.departmentId ?? (startRouter && startRouter.departmentId) ?? (departments[0] && departments[0].id) ?? ''
++  const firstRouter = (deptId) => (routers.find((r) => r.departmentId === Number(deptId)) || {}).id ?? ''
++
++  const [v, setV] = useState({
++    departmentId: startDept,
++    routerId: startRouter ? startRouter.id : firstRouter(startDept),
++    ether: '', ip: '', prefix: 24, name: '', type: 'PC', status: 'static', notes: '',
++    ...start,
++  })
+   const set = (k) => (e) => setV({ ...v, [k]: e.target.value })
+-  const editing = Boolean(initial && initial.id)
++  const editing = Boolean(start.id)
++
++  // the Router box only lists the routers of the chosen department
++  const deptRouters = routers.filter((r) => r.departmentId === Number(v.departmentId))
++  const changeDepartment = (e) => setV({ ...v, departmentId: Number(e.target.value), routerId: firstRouter(e.target.value) })
++
++  const ports = [...new Set([
++    ...devices.filter((d) => d.routerId === Number(v.routerId)).map((d) => d.ether),
++    ...COMMON_PORTS,
++  ])]
++
++  const blocked = !departments.length ? 'department' : !deptRouters.length ? 'router' : null
+ 
+   return (
+-    <form className="form" onSubmit={(e) => { e.preventDefault(); onSave(v) }}>
+-      <h2>{editing ? 'Edit device' : 'Add device'}</h2>
++    <form className="form" onSubmit={(e) => { e.preventDefault(); onSave({ ...v, routerId: Number(v.routerId), prefix: String(v.prefix) }) }}>
++      <h2>{editing ? 'Edit IP address' : 'Add IP address'}</h2>
++
+       <div className="grid2">
+-        <label>IP address
+-          <input value={v.ip} onChange={set('ip')} placeholder="192.168.1.10" inputMode="decimal"
+-            autoFocus={!(initial && initial.ip)} required />
++        <label>Department
++          <select value={v.departmentId} onChange={changeDepartment} required disabled={!departments.length}>
++            {!departments.length && <option value="">No departments yet</option>}
++            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
++          </select>
++        </label>
++        <label>Router
++          <select value={v.routerId} onChange={(e) => setV({ ...v, routerId: Number(e.target.value) })} required disabled={!deptRouters.length}>
++            {!deptRouters.length && <option value="">No routers yet</option>}
++            {deptRouters.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
++          </select>
++        </label>
++      </div>
++
++      {blocked === 'department' && (
++        <p className="hint">Add a department first. <button type="button" className="link" onClick={onAddDepartment}>Add department</button></p>
++      )}
++      {blocked === 'router' && (
++        <p className="hint">This department has no routers yet. <button type="button" className="link" onClick={() => onAddRouter(v.departmentId)}>Add router</button></p>
++      )}
++
++      <div className="grid2">
++        <label>Ethernet port
++          <input value={v.ether} onChange={set('ether')} placeholder="Gi0/0" list="ether-list" autoComplete="off" autoFocus={!start.ether} required />
++          <datalist id="ether-list">{ports.map((p) => <option key={p} value={p} />)}</datalist>
+         </label>
+         <label>Device name
+-          <input value={v.name} onChange={set('name')} placeholder="Office printer"
+-            autoFocus={Boolean(initial && initial.ip)} required />
++          <input value={v.name} onChange={set('name')} placeholder="Office printer" required />
++        </label>
++        <label>IP address
++          <input value={v.ip} onChange={set('ip')} placeholder="192.168.10.1" inputMode="decimal" required />
++        </label>
++        <label>Prefix
++          <div className="prefixfield">
++            <span aria-hidden="true">/</span>
++            <input type="number" min="0" max="32" value={v.prefix} onChange={set('prefix')} placeholder="24" aria-label="Prefix" required />
++          </div>
+         </label>
+         <label>Type
+           <select value={v.type} onChange={set('type')}>
+@@ -47,7 +100,7 @@ export default function DeviceForm({ initial, types, error, suggestion, onSave,
+       )}
+ 
+       <div className="actions">
+-        <button type="submit" className="primary">{editing ? 'Save changes' : 'Add device'}</button>
++        <button type="submit" className="primary" disabled={Boolean(blocked)}>{editing ? 'Save changes' : 'Add IP address'}</button>
+         <button type="button" onClick={onCancel}>Cancel</button>
+       </div>
+     </form>
+diff --git a/client/src/components/Icon.jsx b/client/src/components/Icon.jsx
+index 07e09c5..a71c23f 100644
+--- a/client/src/components/Icon.jsx
++++ b/client/src/components/Icon.jsx
+@@ -26,6 +26,8 @@ const PATHS = {
+   list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
+   x: 'M6 6l12 12M18 6L6 18',
+   zap: 'M13 2L4 14h7l-1 8 9-12h-7z',
++  building: 'M4 21V5l8-3v19M12 9l8 3v9M2 21h20M8 8h.01M8 12h.01M8 16h.01',
++  ethernet: 'M6 3h12v9h-3v3H9v-3H6zM9 6v3M12 6v3M15 6v3M12 15v6',
+   other: 'M12 2l9 5v10l-9 5-9-5V7zM12 12l9-5M12 12v10M12 12L3 7',
+ }
+ 
+diff --git a/client/src/components/NameForm.jsx b/client/src/components/NameForm.jsx
+new file mode 100644
+index 0000000..437c44d
+--- /dev/null
++++ b/client/src/components/NameForm.jsx
+@@ -0,0 +1,19 @@
++import { useState } from 'react'
++
++// A small dialog for the name of a department or a router.
++export default function NameForm({ title, label, placeholder, initial, submitLabel, error, onSave, onCancel }) {
++  const [name, setName] = useState(initial || '')
++  return (
++    <form className="form" onSubmit={(e) => { e.preventDefault(); onSave(name) }}>
++      <h2>{title}</h2>
++      <label>{label}
++        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={placeholder} maxLength={40} autoFocus required />
++      </label>
++      {error && <p className="error" role="alert">{error}</p>}
++      <div className="actions">
++        <button type="submit" className="primary">{submitLabel}</button>
++        <button type="button" onClick={onCancel}>Cancel</button>
++      </div>
++    </form>
++  )
++}
+diff --git a/client/src/components/Sidebar.jsx b/client/src/components/Sidebar.jsx
+index ebc0b06..f5942c4 100644
+--- a/client/src/components/Sidebar.jsx
++++ b/client/src/components/Sidebar.jsx
+@@ -14,9 +14,9 @@ function Filter({ label, count, on, dot, tone, onClick }) {
+   )
+ }
+ 
+-const NAV = [['overview', 'Dashboard'], ['subnet', 'Subnet map'], ['devices', 'Devices']]
++const NAV = [['overview', 'Dashboard'], ['devices', 'Network'], ['subnet', 'Subnet map']]
+ 
+-export default function Sidebar({ user, devices, types, typeFilter, statusFilter, onType, onStatus, active, onNav, onDownload, open, onClose }) {
++export default function Sidebar({ user, devices, departments, selectedDept, onDepartment, onAddDepartment, types, typeFilter, statusFilter, onType, onStatus, active, onNav, onDownload, open, onClose }) {
+   const byType = countBy(devices, 'type')
+   const staticCount = devices.filter((d) => d.status === 'static').length
+ 
+@@ -29,7 +29,7 @@ export default function Sidebar({ user, devices, types, typeFilter, statusFilter
+         <Section icon="user" title="Profile" />
+         <div className="sb-profile">
+           <span className="avatar">{user.username[0].toUpperCase()}</span>
+-          <div><b>{user.username}</b><span>{devices.length} {devices.length === 1 ? 'device' : 'devices'}</span></div>
++          <div><b>{user.username}</b><span>{devices.length} IP {devices.length === 1 ? 'address' : 'addresses'}</span></div>
+         </div>
+ 
+         <Section icon="chart" title="Overview" />
+@@ -38,6 +38,12 @@ export default function Sidebar({ user, devices, types, typeFilter, statusFilter
+             aria-current={active === id ? 'page' : undefined} onClick={() => onNav(id)}>{label}</button>
+         ))}
+ 
++        <Section icon="building" title="Departments" />
++        {departments.map((d) => (
++          <Filter key={d.id} label={d.name} count={d.ipCount} on={selectedDept === d.id} onClick={() => onDepartment(d.id)} />
++        ))}
++        <button type="button" className="sb-item sb-add" onClick={onAddDepartment}>+ Add department</button>
++
+         <Section icon="layers" title="Device types" />
+         <Filter label="All types" count={devices.length} on={typeFilter === 'All'} onClick={() => onType('All')} />
+         {types.map((t) => (
+diff --git a/client/src/components/Topbar.jsx b/client/src/components/Topbar.jsx
+index 3c5127c..f4f5791 100644
+--- a/client/src/components/Topbar.jsx
++++ b/client/src/components/Topbar.jsx
+@@ -11,7 +11,7 @@ export default function Topbar({ user, onMenu, onAdd, onLogout }) {
+       </div>
+       <div className="topbar-right">
+         <ThemeToggle />
+-        <button type="button" className="btn primary" onClick={onAdd}><Icon name="plus" size={16} /> Add device</button>
++        <button type="button" className="btn primary" onClick={onAdd}><Icon name="plus" size={16} /> Add IP address</button>
+         <div className="userchip" title={user.username}>
+           <span className="avatar">{user.username[0].toUpperCase()}</span>
+           <span className="uname">{user.username}</span>
+diff --git a/client/src/styles.css b/client/src/styles.css
+index 51626b9..3c4ef45 100644
+--- a/client/src/styles.css
++++ b/client/src/styles.css
+@@ -291,3 +291,10 @@ tbody tr:hover { background: color-mix(in srgb, var(--brand) 6%, transparent); }
+ 
+ /* light theme: the selected sidebar row is pale, so its count badge must be dark */
+ :root[data-theme="light"] .sb-item.on .sb-count { background: rgba(163, 53, 224, .16); color: var(--brand); }
++
++/* ---------- departments, form details ---------- */
++.sb-add { color: var(--brand); font-weight: 600; }
++.prefixfield { display: flex; align-items: center; margin-top: 4px; background: var(--surface2); border: 1px solid var(--line2); border-radius: 12px; }
++.prefixfield span { padding-left: 14px; color: var(--mute); font-weight: 700; }
++.prefixfield input { margin: 0; border: 0; background: none; outline: 0; box-shadow: none; padding-left: 6px; }
++.prefixfield:focus-within { border-color: var(--cyan); outline: 3px solid color-mix(in srgb, var(--cyan) 25%, transparent); }
+-- 
+2.43.0
+

@@ -1,0 +1,49 @@
+From b72d238a680e7883a78e6bfb44901b03476b8e92 Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Wed, 4 Nov 2026 05:42:05 +0000
+Subject: [PATCH] IP Address Manager
+
+---
+ .gitignore          | 3 +++
+ README.md           | 3 +++
+ server/package.json | 8 ++++++++
+ 3 files changed, 14 insertions(+)
+ create mode 100644 .gitignore
+ create mode 100644 README.md
+ create mode 100644 server/package.json
+
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..c09dcad
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,3 @@
++node_modules
++data.db
++dist
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..3427857
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,3 @@
++# IP Address Manager
++
++Track which device uses which IP address. Work in progress.
+diff --git a/server/package.json b/server/package.json
+new file mode 100644
+index 0000000..372d9e8
+--- /dev/null
++++ b/server/package.json
+@@ -0,0 +1,8 @@
++{
++  "name": "ipam-server",
++  "private": true,
++  "version": "1.0.0",
++  "type": "module",
++  "engines": { "node": ">=22.13" },
++  "scripts": { "start": "node index.js", "dev": "node --watch index.js", "test": "node --test" }
++}
+-- 
+2.43.0
+

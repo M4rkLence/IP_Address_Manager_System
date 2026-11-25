@@ -1,0 +1,408 @@
+From 5d5e6ad4f53ddaca347868c9de06e1031d226cdc Mon Sep 17 00:00:00 2001
+From: Student <student@example.com>
+Date: Sun, 22 Nov 2026 06:59:25 +0000
+Subject: [PATCH] IP Address Manager update 46
+
+---
+ client/src/Dashboard.jsx               |  22 ++---
+ client/src/components/DeviceList.jsx   | 115 -------------------------
+ client/src/components/NetworkPanel.jsx |  61 +++++++++++++
+ client/src/components/RecordTable.jsx  |  62 +++++++++++++
+ client/src/components/StatCards.jsx    |  16 ++--
+ client/src/lib/csv.js                  |   8 +-
+ 6 files changed, 146 insertions(+), 138 deletions(-)
+ delete mode 100644 client/src/components/DeviceList.jsx
+ create mode 100644 client/src/components/NetworkPanel.jsx
+ create mode 100644 client/src/components/RecordTable.jsx
+
+diff --git a/client/src/Dashboard.jsx b/client/src/Dashboard.jsx
+index 4acc09d..fc811d2 100644
+--- a/client/src/Dashboard.jsx
++++ b/client/src/Dashboard.jsx
+@@ -12,7 +12,7 @@ import Modal from './components/Modal.jsx'
+ import StatCards from './components/StatCards.jsx'
+ import DeviceForm from './components/DeviceForm.jsx'
+ import NameForm from './components/NameForm.jsx'
+-import DeviceList from './components/DeviceList.jsx'
++import NetworkPanel from './components/NetworkPanel.jsx'
+ import SubnetGrid from './components/SubnetGrid.jsx'
+ 
+ export default function Dashboard({ user, onLogout, onExpired }) {
+@@ -35,6 +35,7 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+   const [menuOpen, setMenuOpen] = useState(false)
+   const [typeFilter, setTypeFilter] = useState('All')
+   const [statusFilter, setStatusFilter] = useState('All')
++  const [query, setQuery] = useState('')
+   const toastTimer = useRef(null)
+ 
+   // devices, departments and routers always load together, so every number on the page stays in step
+@@ -158,8 +159,6 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+   const blocks = useMemo(() => blockUsage(subnet, devices), [subnet, devices])
+   const growth = useMemo(() => growthSeries(devices), [devices])
+ 
+-  const _unused = { removeDepartment, removeRouter } // used by the Network panel in the next commit
+-
+   const goTo = (id) => {
+     setActive(id)
+     setMenuOpen(false)
+@@ -178,7 +177,7 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+   return (
+     <div className="shell">
+       <Sidebar user={user} devices={devices} departments={departments} selectedDept={selection.deptId}
+-        onDepartment={(id) => { setSelection({ deptId: id, routerId: null }); goTo('devices') }} onAddDepartment={() => openName('department', 'add')}
++        onDepartment={(id) => { setSelection({ deptId: id, routerId: null }); setTypeFilter('All'); setStatusFilter('All'); setQuery(''); goTo('devices') }} onAddDepartment={() => openName('department', 'add')}
+         types={types} typeFilter={typeFilter} statusFilter={statusFilter}
+         onType={(t) => filterBy('type', t)} onStatus={(s) => filterBy('status', s)} active={active} onNav={goTo}
+         onDownload={() => downloadCsv(devices, 'ip-device-report.csv')} open={menuOpen} onClose={() => setMenuOpen(false)} />
+@@ -187,13 +186,13 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+         <Topbar user={user} onMenu={() => setMenuOpen(true)} onAdd={() => openForm()} onLogout={onLogout} />
+         {loadError && <p className="error" role="alert">{loadError}</p>}
+ 
+-        <StatCards devices={devices} subnet={subnet} onUse={(ip) => openForm({ ip })} />
++        <StatCards devices={devices} subnet={subnet} departments={departments} routers={routers} onUse={(ip) => openForm({ ip })} />
+ 
+         <div className="dash-cols">
+           <div className="dash-left">
+             <section className="card">
+-              <div className="card-head"><h2>Devices over time</h2><span className="dim small">last 14 days</span></div>
+-              {devices.length === 0 ? <p className="empty">Add a device to see how your network grows.</p> : (
++              <div className="card-head"><h2>IP addresses over time</h2><span className="dim small">last 14 days</span></div>
++              {devices.length === 0 ? <p className="empty">Add an IP address to see how your network grows.</p> : (
+                 <LineChart dates={growth.dates} title="Devices over time" series={[
+                   { key: 'static', name: 'Static', color: '#22d3c5', values: growth.static },
+                   { key: 'dhcp', name: 'DHCP', color: '#ff5ec7', values: growth.dhcp, dashed: true },
+@@ -252,9 +251,12 @@ export default function Dashboard({ user, onLogout, onExpired }) {
+         </section>
+ 
+         <section className="card" id="devices">
+-          <div className="card-head"><h2>All devices</h2></div>
+-          <DeviceList devices={devices} typeFilter={typeFilter} statusFilter={statusFilter} onClearFilter={clearFilter}
+-            onAdd={() => openForm()} onEdit={(d) => openForm(d)} onDelete={remove} />
++          <div className="card-head"><h2>Network</h2></div>
++          <NetworkPanel devices={devices} departments={departments} routers={routers} selection={selection} onSelect={setSelection}
++            query={query} onQuery={setQuery} typeFilter={typeFilter} statusFilter={statusFilter} onClearFilter={clearFilter}
++            onAddDepartment={() => openName('department', 'add')} onRenameDepartment={(d) => openName('department', 'rename', d)} onDeleteDepartment={removeDepartment}
++            onAddRouter={(deptId) => openName('router', 'add', null, deptId)} onRenameRouter={(r) => openName('router', 'rename', r)} onDeleteRouter={removeRouter}
++            onAddIp={(ctx) => openForm(ctx)} onEdit={(d) => openForm(d)} onDelete={remove} />
+         </section>
+       </main>
+ 
+diff --git a/client/src/components/DeviceList.jsx b/client/src/components/DeviceList.jsx
+deleted file mode 100644
+index d9aa375..0000000
+--- a/client/src/components/DeviceList.jsx
++++ /dev/null
+@@ -1,115 +0,0 @@
+-import { useEffect, useMemo, useRef, useState } from 'react'
+-import Icon from './Icon.jsx'
+-import { downloadCsv } from '../lib/csv.js'
+-import { typeColor } from '../lib/stats.js'
+-
+-const TYPE_ICONS = { Router: 'router', Switch: 'switch', Server: 'server', PC: 'pc', Printer: 'printer', Phone: 'phone', Other: 'other' }
+-const COLUMNS = [['ipNum', 'IP address'], ['name', 'Name'], ['type', 'Type'], ['status', 'Assignment'], ['notes', 'Notes']]
+-
+-export default function DeviceList({ devices, typeFilter, statusFilter, onClearFilter, onAdd, onEdit, onDelete }) {
+-  const [query, setQuery] = useState('')
+-  const [sort, setSort] = useState({ key: 'ipNum', dir: 1 })
+-  const searchRef = useRef(null)
+-
+-  // Press "/" anywhere to jump to the search box.
+-  useEffect(() => {
+-    const onKey = (e) => {
+-      if (e.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
+-        e.preventDefault()
+-        if (searchRef.current) searchRef.current.focus()
+-      }
+-    }
+-    window.addEventListener('keydown', onKey)
+-    return () => window.removeEventListener('keydown', onKey)
+-  }, [])
+-
+-  const rows = useMemo(() => {
+-    const q = query.trim().toLowerCase()
+-    return devices
+-      .filter((d) => (typeFilter === 'All' || d.type === typeFilter) && (statusFilter === 'All' || d.status === statusFilter) &&
+-        (!q || [d.ip, d.name, d.type, d.status, d.notes].some((v) => String(v).toLowerCase().includes(q))))
+-      .sort((a, b) => {
+-        const x = a[sort.key], y = b[sort.key]
+-        return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y))) * sort.dir
+-      })
+-  }, [devices, query, typeFilter, statusFilter, sort])
+-
+-  const toggleSort = (key) => setSort((s) => ({ key, dir: s.key === key ? -s.dir : 1 }))
+-
+-  if (!devices.length) {
+-    return (
+-      <div className="empty-state">
+-        <Icon name="network" size={36} />
+-        <h3>No devices yet</h3>
+-        <p>Add your first device to start tracking IP addresses.</p>
+-        <button type="button" className="btn primary" onClick={onAdd}><Icon name="plus" size={16} /> Add device</button>
+-      </div>
+-    )
+-  }
+-
+-  return (
+-    <>
+-      <div className="toolbar">
+-        <label className="search">
+-          <Icon name="search" size={16} />
+-          <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)}
+-            placeholder="Search devices  ( / )" aria-label="Search devices" />
+-        </label>
+-        {typeFilter !== 'All' && (
+-          <button type="button" className="fchip" onClick={() => onClearFilter('type')} aria-label={`Remove type filter ${typeFilter}`}>
+-            Type: {typeFilter} <Icon name="x" size={14} />
+-          </button>
+-        )}
+-        {statusFilter !== 'All' && (
+-          <button type="button" className="fchip" onClick={() => onClearFilter('status')} aria-label={`Remove assignment filter ${statusFilter}`}>
+-            Assignment: {statusFilter === 'dhcp' ? 'DHCP' : 'Static'} <Icon name="x" size={14} />
+-          </button>
+-        )}
+-        <span className="count">{rows.length} of {devices.length}</span>
+-        <button type="button" className="btn" onClick={() => downloadCsv(rows, 'devices.csv')} disabled={!rows.length} aria-label="Export CSV">
+-          <Icon name="download" size={16} /><span className="btn-text">Export CSV</span>
+-        </button>
+-      </div>
+-
+-      {rows.length ? (
+-        <div className="scroll">
+-          <table>
+-            <thead>
+-              <tr>
+-                {COLUMNS.map(([key, label]) => (
+-                  <th key={key} aria-sort={sort.key === key ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none'}>
+-                    <button type="button" className="sortbtn" onClick={() => toggleSort(key)}>
+-                      {label}{sort.key === key && <Icon name={sort.dir === 1 ? 'up' : 'down'} size={14} />}
+-                    </button>
+-                  </th>
+-                ))}
+-                <th><span className="sr">Actions</span></th>
+-              </tr>
+-            </thead>
+-            <tbody>
+-              {rows.map((d) => (
+-                <tr key={d.id}>
+-                  <td data-label="IP address" className="mono">{d.ip}</td>
+-                  <td data-label="Name"><b>{d.name}</b></td>
+-                  <td data-label="Type">
+-                    <span className="typecell"><span className="typeico" style={{ '--c': typeColor(d.type) }}><Icon name={TYPE_ICONS[d.type] || 'other'} size={15} /></span>{d.type}</span>
+-                  </td>
+-                  <td data-label="Assignment"><span className={'badge ' + d.status}>{d.status === 'dhcp' ? 'DHCP' : 'Static'}</span></td>
+-                  <td data-label="Notes">{d.notes || <span className="dim">-</span>}</td>
+-                  <td className="rowbtns">
+-                    <div className="rowbtn-wrap">
+-                      <button type="button" className="iconbtn" onClick={() => onEdit(d)} aria-label={`Edit ${d.name}`} title="Edit"><Icon name="edit" size={16} /></button>
+-                      <button type="button" className="iconbtn danger" onClick={() => onDelete(d)} aria-label={`Delete ${d.name}`} title="Delete"><Icon name="trash" size={16} /></button>
+-                    </div>
+-                  </td>
+-                </tr>
+-              ))}
+-            </tbody>
+-          </table>
+-        </div>
+-      ) : (
+-        <p className="empty">No devices match your filters.</p>
+-      )}
+-    </>
+-  )
+-}
+diff --git a/client/src/components/NetworkPanel.jsx b/client/src/components/NetworkPanel.jsx
+new file mode 100644
+index 0000000..633ef89
+--- /dev/null
++++ b/client/src/components/NetworkPanel.jsx
+@@ -0,0 +1,61 @@
++import { useEffect, useMemo, useRef } from 'react'
++import Icon from './Icon.jsx'
++import Explorer from './Explorer.jsx'
++import RecordTable from './RecordTable.jsx'
++import { downloadCsv } from '../lib/csv.js'
++
++// The Network card: one search box, then either the big-button explorer or, while searching or filtering, a results table.
++export default function NetworkPanel({ devices, query, onQuery, typeFilter, statusFilter, onClearFilter, onEdit, onDelete, ...explorer }) {
++  const searchRef = useRef(null)
++
++  // Press "/" anywhere to jump to the search box.
++  useEffect(() => {
++    const onKey = (e) => {
++      if (e.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
++        e.preventDefault()
++        if (searchRef.current) searchRef.current.focus()
++      }
++    }
++    window.addEventListener('keydown', onKey)
++    return () => window.removeEventListener('keydown', onKey)
++  }, [])
++
++  const q = query.trim().toLowerCase()
++  const filtering = q !== '' || typeFilter !== 'All' || statusFilter !== 'All'
++
++  const rows = useMemo(() => devices.filter((d) =>
++    (typeFilter === 'All' || d.type === typeFilter) && (statusFilter === 'All' || d.status === statusFilter) &&
++    (!q || [d.departmentName, d.routerName, d.ether, d.cidr, d.name, d.type, d.status, d.notes].some((v) => String(v).toLowerCase().includes(q)))
++  ), [devices, q, typeFilter, statusFilter])
++
++  return (
++    <>
++      <div className="toolbar">
++        <label className="search">
++          <Icon name="search" size={16} />
++          <input ref={searchRef} value={query} onChange={(e) => onQuery(e.target.value)}
++            placeholder="Search IP addresses  ( / )" aria-label="Search IP addresses" />
++        </label>
++        {typeFilter !== 'All' && (
++          <button type="button" className="fchip" onClick={() => onClearFilter('type')} aria-label={`Remove type filter ${typeFilter}`}>
++            Type: {typeFilter} <Icon name="x" size={14} />
++          </button>
++        )}
++        {statusFilter !== 'All' && (
++          <button type="button" className="fchip" onClick={() => onClearFilter('status')} aria-label={`Remove assignment filter ${statusFilter}`}>
++            Assignment: {statusFilter === 'dhcp' ? 'DHCP' : 'Static'} <Icon name="x" size={14} />
++          </button>
++        )}
++        {filtering && <span className="count">{rows.length} of {devices.length}</span>}
++        <button type="button" className="btn" disabled={!(filtering ? rows : devices).length} aria-label="Export CSV"
++          onClick={() => downloadCsv(filtering ? rows : devices, filtering ? 'devices.csv' : 'ip-device-report.csv')}>
++          <Icon name="download" size={16} /><span className="btn-text">Export CSV</span>
++        </button>
++      </div>
++
++      {filtering
++        ? <RecordTable rows={rows} onEdit={onEdit} onDelete={onDelete} />
++        : <Explorer devices={devices} onEdit={onEdit} onDelete={onDelete} {...explorer} />}
++    </>
++  )
++}
+diff --git a/client/src/components/RecordTable.jsx b/client/src/components/RecordTable.jsx
+new file mode 100644
+index 0000000..a9d2c1c
+--- /dev/null
++++ b/client/src/components/RecordTable.jsx
+@@ -0,0 +1,62 @@
++import { useMemo, useState } from 'react'
++import Icon from './Icon.jsx'
++import { typeColor } from '../lib/stats.js'
++
++const TYPE_ICONS = { Router: 'router', Switch: 'switch', Server: 'server', PC: 'pc', Printer: 'printer', Phone: 'phone', Other: 'other' }
++const COLUMNS = [['departmentName', 'Department'], ['routerName', 'Router'], ['ether', 'Ethernet port'], ['ipNum', 'IP address / prefix'],
++  ['name', 'Device'], ['type', 'Type'], ['status', 'Assignment'], ['notes', 'Notes']]
++
++// Search and filter results: every matching IP address in one sortable table.
++export default function RecordTable({ rows, onEdit, onDelete }) {
++  const [sort, setSort] = useState({ key: 'ipNum', dir: 1 })
++
++  const sorted = useMemo(() => [...rows].sort((a, b) => {
++    const x = a[sort.key], y = b[sort.key]
++    return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true })) * sort.dir
++  }), [rows, sort])
++
++  const toggleSort = (key) => setSort((s) => ({ key, dir: s.key === key ? -s.dir : 1 }))
++
++  if (!rows.length) return <p className="empty">No IP addresses match your search or filters.</p>
++
++  return (
++    <div className="scroll">
++      <table>
++        <thead>
++          <tr>
++            {COLUMNS.map(([key, label]) => (
++              <th key={key} aria-sort={sort.key === key ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none'}>
++                <button type="button" className="sortbtn" onClick={() => toggleSort(key)}>
++                  {label}{sort.key === key && <Icon name={sort.dir === 1 ? 'up' : 'down'} size={14} />}
++                </button>
++              </th>
++            ))}
++            <th><span className="sr">Actions</span></th>
++          </tr>
++        </thead>
++        <tbody>
++          {sorted.map((d) => (
++            <tr key={d.id}>
++              <td data-label="Department">{d.departmentName}</td>
++              <td data-label="Router">{d.routerName}</td>
++              <td data-label="Ethernet port">{d.ether}</td>
++              <td data-label="IP address / prefix" className="mono"><b>{d.cidr}</b></td>
++              <td data-label="Device"><b>{d.name}</b></td>
++              <td data-label="Type">
++                <span className="typecell"><span className="typeico" style={{ '--c': typeColor(d.type) }}><Icon name={TYPE_ICONS[d.type] || 'other'} size={15} /></span>{d.type}</span>
++              </td>
++              <td data-label="Assignment"><span className={'badge ' + d.status}>{d.status === 'dhcp' ? 'DHCP' : 'Static'}</span></td>
++              <td data-label="Notes">{d.notes || <span className="dim">-</span>}</td>
++              <td className="rowbtns">
++                <div className="rowbtn-wrap">
++                  <button type="button" className="iconbtn" onClick={() => onEdit(d)} aria-label={`Edit ${d.name}`} title="Edit"><Icon name="edit" size={16} /></button>
++                  <button type="button" className="iconbtn danger" onClick={() => onDelete(d)} aria-label={`Delete ${d.name}`} title="Delete"><Icon name="trash" size={16} /></button>
++                </div>
++              </td>
++            </tr>
++          ))}
++        </tbody>
++      </table>
++    </div>
++  )
++}
+diff --git a/client/src/components/StatCards.jsx b/client/src/components/StatCards.jsx
+index e0bb171..2a2923e 100644
+--- a/client/src/components/StatCards.jsx
++++ b/client/src/components/StatCards.jsx
+@@ -2,9 +2,7 @@ import Icon from './Icon.jsx'
+ 
+ const utc = (s) => Date.parse(s.replace(' ', 'T') + 'Z')
+ 
+-export default function StatCards({ devices, subnet, onUse }) {
+-  const staticCount = devices.filter((d) => d.status === 'static').length
+-  const dhcpCount = devices.length - staticCount
++export default function StatCards({ devices, subnet, departments, routers, onUse }) {
+   const weekAgo = Date.now() - 7 * 86_400_000
+   const recent = devices.filter((d) => d.createdAt && utc(d.createdAt) >= weekAgo).length
+   const pct = subnet ? Math.round((subnet.usedCount / subnet.usable) * 100) : 0
+@@ -12,8 +10,8 @@ export default function StatCards({ devices, subnet, onUse }) {
+   return (
+     <section className="summary" aria-label="Summary">
+       <div className="stat grad purple">
+-        <div className="stat-label">Total devices</div>
+-        <div className="stat-big"><b>{devices.length}</b><small>{devices.length === 1 ? 'device' : 'devices'}</small></div>
++        <div className="stat-label">Total IP addresses</div>
++        <div className="stat-big"><b>{devices.length}</b><small>{devices.length === 1 ? 'address' : 'addresses'}</small></div>
+         <div className="stat-foot">{recent} added in the last 7 days</div>
+       </div>
+ 
+@@ -28,12 +26,12 @@ export default function StatCards({ devices, subnet, onUse }) {
+ 
+       <div className="stat plain">
+         <div className="pillrow">
+-          <span className="pic pinkg"><Icon name="server" size={16} /></span><span>Static</span>
+-          <b className="pcount pinkc">{staticCount}</b>
++          <span className="pic pinkg"><Icon name="building" size={16} /></span><span>Departments</span>
++          <b className="pcount pinkc">{departments.length}</b>
+         </div>
+         <div className="pillrow">
+-          <span className="pic cyang"><Icon name="router" size={16} /></span><span>DHCP</span>
+-          <b className="pcount cyanc">{dhcpCount}</b>
++          <span className="pic cyang"><Icon name="router" size={16} /></span><span>Routers</span>
++          <b className="pcount cyanc">{routers.length}</b>
+         </div>
+       </div>
+ 
+diff --git a/client/src/lib/csv.js b/client/src/lib/csv.js
+index 94a3961..d631f57 100644
+--- a/client/src/lib/csv.js
++++ b/client/src/lib/csv.js
+@@ -1,8 +1,8 @@
+-// Turns a list of devices into CSV text and downloads it.
++// Turns a list of IP addresses into CSV text and downloads it.
+ export function toCsv(rows) {
+-  const q = (v) => `"${String(v).replace(/"/g, '""')}"`
+-  const lines = rows.map((d) => [d.ip, d.name, d.type, d.status, d.notes].map(q).join(','))
+-  return ['IP address,Name,Type,Assignment,Notes', ...lines].join('\n')
++  const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
++  const lines = rows.map((d) => [d.departmentName, d.routerName, d.ether, d.ip, d.prefix, d.name, d.type, d.status, d.notes].map(q).join(','))
++  return ['Department,Router,Ethernet port,IP address,Prefix,Device name,Type,Assignment,Notes', ...lines].join('\n')
+ }
+ 
+ export function downloadCsv(rows, filename = 'devices.csv') {
+-- 
+2.43.0
+
